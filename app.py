@@ -190,15 +190,16 @@ def load_portfolio():
     if _ensure_data_dir() and os.path.exists(PORTFOLIO_FILE):
         try:
             df = pd.read_csv(PORTFOLIO_FILE, dtype={"代號": str})
-            for col in ["代號", "股數", "均價", "方向", "備註"]:
+            for col in ["代號", "股數", "均價", "方向", "備註", "標籤"]:
                 if col not in df.columns:
-                    df[col] = "Long" if col == "方向" else None
+                    df[col] = "Long" if col == "方向" else ""
             df["代號"] = df["代號"].astype(str).str.strip()
             df["方向"] = df["方向"].fillna("Long").replace("", "Long")
-            return df[["代號", "股數", "均價", "方向", "備註"]]
+            df["標籤"] = df["標籤"].fillna("")
+            return df[["代號", "股數", "均價", "方向", "備註", "標籤"]]
         except Exception:
             pass
-    return pd.DataFrame(columns=["代號", "股數", "均價", "方向", "備註"])
+    return pd.DataFrame(columns=["代號", "股數", "均價", "方向", "備註", "標籤"])
 
 def save_portfolio(df):
     if not _ensure_data_dir():
@@ -209,11 +210,11 @@ def save_portfolio(df):
     except Exception:
         return False
 
-def upsert_portfolio_position(code, shares, avg_cost, direction="Long", note=""):
-    """新增持股；若代號已存在，用新的股數/均價/方向覆蓋（代表你更新了這筆部位）。"""
+def upsert_portfolio_position(code, shares, avg_cost, direction="Long", note="", tags=""):
+    """新增持股；若代號已存在，用新的股數/均價/方向/標籤覆蓋（代表你更新了這筆部位）。"""
     df = load_portfolio()
     df = df[df["代號"].astype(str) != str(code)]
-    new_row = pd.DataFrame([{"代號": str(code), "股數": shares, "均價": avg_cost, "方向": direction, "備註": note}])
+    new_row = pd.DataFrame([{"代號": str(code), "股數": shares, "均價": avg_cost, "方向": direction, "備註": note, "標籤": tags}])
     df = pd.concat([df, new_row], ignore_index=True)
     save_portfolio(df)
     return df
@@ -385,6 +386,8 @@ def to_excel_bytes(df):
     except Exception:
         return None
 
+
+TAG_OPTIONS = ["🟢 長線存股", "⚡ 短線動能", "🔥 AI 核心", "🛡️ 防禦型", "🚀 題材股", "💰 高股息", "🌊 景氣循環"]
 
 INDUSTRY_MAP = {
     "3711.TW": {"name": "日月光投控", "target_pe": 14},
@@ -2540,7 +2543,7 @@ if app_mode == "🏠 戰情室首頁":
     _home_portfolio = load_portfolio()
     if _home_portfolio is not None and not _home_portfolio.empty:
         _home_dir, _ = get_directory()
-        total_mv = total_cost = today_pnl = 0.0
+        total_mv = total_cost = today_pnl = total_pnl = 0.0
         n_missing = 0
         with st.spinner("更新持倉現價中…"):
             for _, r in _home_portfolio.iterrows():
@@ -2553,11 +2556,11 @@ if app_mode == "🏠 戰情室首頁":
                     sign = -1 if is_short else 1
                     total_mv += ev['price'] * shares
                     total_cost += cost * shares
+                    total_pnl += (ev['price'] - cost) * shares * sign  # 空方價格下跌才賺，符號要反過來
                     if ev['prev_close']:
                         today_pnl += (ev['price'] - ev['prev_close']) * shares * sign
                 else:
                     n_missing += 1
-        total_pnl = (total_mv - total_cost) if total_cost else 0.0
         k1, k2, k3 = st.columns(3)
         k1.metric("總市值", f"${total_mv:,.0f}")
         k2.metric("今日估計損益", f"${today_pnl:,.0f}", f"{today_pnl/total_mv*100:+.2f}%" if total_mv else None, delta_color="normal" if today_pnl >= 0 else "inverse")
@@ -2648,22 +2651,46 @@ elif app_mode == "💼 投資組合管理":
     directory, _live_ok = get_directory()
 
     with st.expander("➕ 新增 / 更新持股", expanded=True):
-        pc1, pc2, pc3, pc4 = st.columns([2, 1, 1, 2])
-        p_code_raw = pc1.text_input("股票代號", placeholder="例如 2330 或 2330.TW", key="pf_add_code")
+        sc1, sc2 = st.columns([2, 1.4])
+        pf_query = sc1.text_input("🔍 搜尋股票（打代號或中文名）", key="pf_search_query", placeholder="例如 2330 或 台積電")
+        pf_options, pf_total_hits = search_stocks(pf_query, directory)
+        if pf_query.strip() and not pf_options:
+            pf_options = [pf_query.strip().upper()]
+        elif pf_query.strip() and pf_total_hits > len(pf_options):
+            sc1.caption(f"找到 {pf_total_hits} 檔，只列出前 {len(pf_options)} 檔，請多打幾個字縮小範圍")
+        code_choice = sc2.selectbox(
+            "選擇股票", pf_options, key="pf_add_code_select",
+            format_func=lambda c: f"{directory[c]['name']}（{c}）" if c in directory else c
+        ) if pf_options else None
+
+        fc1, fc2 = st.columns([1.3, 3])
+        if fc1.button("💰 用現價帶入均價", disabled=not code_choice, **STRETCH):
+            suffix = directory.get(code_choice, {}).get("suffix", ".TW")
+            with st.spinner("抓取即時股價中…"):
+                ev = evaluate_single_stock(code_choice + suffix, directory)
+            if ev and ev.get("price"):
+                st.session_state["pf_add_cost"] = round(ev["price"], 2)
+                fc2.success(f"已帶入現價 ${ev['price']:.2f}，請確認股數後再按下方「儲存這筆持股」。")
+            else:
+                fc2.warning("抓不到即時股價，請手動輸入均價。")
+
+        pc2, pc3, pc4 = st.columns([1, 1, 2])
         p_shares = pc2.number_input("股數", min_value=0, value=0, step=100, key="pf_add_shares")
-        p_cost = pc3.number_input("均價", min_value=0.0, value=0.0, step=0.1, key="pf_add_cost")
+        st.session_state.setdefault("pf_add_cost", 0.0)
+        p_cost = pc3.number_input("均價", min_value=0.0, step=0.1, key="pf_add_cost")
         p_note = pc4.text_input("備註（選填）", placeholder="例如：核心持股", key="pf_add_note")
         p_side_label = st.radio("部位方向", ["🟢 多方 (Long)", "🔴 空方 (Short)"], horizontal=True, key="pf_add_side")
         p_side = "Short" if p_side_label.startswith("🔴") else "Long"
+        p_tags = st.multiselect("自訂標籤（選填，方便之後篩選分類）", TAG_OPTIONS, key="pf_add_tags")
         if st.button("儲存這筆持股", type="primary"):
-            code_clean = normalize_ticker(p_code_raw).split(".")[0]
+            code_clean = (code_choice or normalize_ticker(pf_query).split(".")[0] or "").strip()
             if not code_clean or p_shares <= 0 or p_cost <= 0:
-                st.warning("請填入代號、股數與均價（股數與均價需大於 0）。")
+                st.warning("請搜尋並選擇股票、填入股數與均價（股數與均價需大於 0）。")
             else:
-                upsert_portfolio_position(code_clean, p_shares, p_cost, p_side, p_note)
+                upsert_portfolio_position(code_clean, p_shares, p_cost, p_side, p_note, tags=",".join(p_tags))
                 st.success(f"已儲存 {code_clean}（{'空方' if p_side=='Short' else '多方'}），股數 {p_shares}、均價 ${p_cost:.2f}。同代號再次輸入會覆蓋成最新資料。")
                 st.rerun()
-        st.caption("同一個代號重複輸入會直接覆蓋成最新的股數、均價與方向（代表你更新了這筆部位），不會疊加。空方部位的損益、停損停利與加碼邏輯會自動反過來計算。")
+        st.caption("同一個代號重複輸入會直接覆蓋成最新的股數、均價、方向與標籤（代表你更新了這筆部位），不會疊加。空方部位的損益、停損停利與加碼邏輯會自動反過來計算。")
 
     with st.expander("💰 現金水位設定（選填，用於倉位配置與資金風險暴露計算）"):
         cash_on_hand = st.number_input("目前可用現金（TWD，不含股票市值）", min_value=0, value=0, step=10000, key="pf_cash")
@@ -2681,6 +2708,7 @@ elif app_mode == "💼 投資組合管理":
                 shares, cost = float(r['股數']), float(r['均價'])
                 pos_side = str(r.get('方向') or 'Long').strip() or 'Long'
                 is_short = (pos_side == 'Short')
+                tag_list = [t for t in str(r.get('標籤') or '').split(",") if t.strip()]
                 try:
                     tk, info, df_p, _q = load_with_fallback(normalize_ticker(code))
                 except Exception:
@@ -2777,7 +2805,7 @@ elif app_mode == "💼 投資組合管理":
                                  pos_stop=pos_stop, pos_stop_far=pos_stop_far, pos_tp1=pos_tp1, pos_tp2=pos_tp2,
                                  dist_stop_pct=dist_stop_pct, dist_tp1_pct=dist_tp1_pct, pos_add_price=pos_add_price,
                                  action_text=action_text, action_color=action_color, trailing_note=trailing_note,
-                                 risk_amt=risk_amt))
+                                 risk_amt=risk_amt, tags=tag_list))
 
         total_mv = sum(x['market_value'] for x in rows if x['market_value'] is not None)
         total_cost = sum(x['cost_basis'] for x in rows)
@@ -2850,7 +2878,50 @@ elif app_mode == "💼 投資組合管理":
             "資金風險暴露(%)": round(x['risk_pct_of_capital'], 2) if x['risk_pct_of_capital'] is not None else None,
             "備註": x['note'],
         } for x in rows])
-        st.dataframe(table_df, **STRETCH, hide_index=True)
+        # ---- 精簡卡片視圖：每檔只露出最核心的 5 項，細節收進展開區 ----
+        all_tags = sorted({t for x in rows for t in x['tags']})
+        tag_filter = st.multiselect("🏷️ 依標籤篩選持股", all_tags, key="pf_tag_filter") if all_tags else []
+        shown_rows = [x for x in rows if not tag_filter or any(t in x['tags'] for t in tag_filter)]
+
+        def _action_level(color):
+            return {"success": "green", "info": "gray", "warning": "yellow", "error": "red"}.get(color, "gray")
+
+        st.markdown("#### 📋 持股一覽")
+        for x in shown_rows:
+            with st.container(border=True):
+                h1, h2, h3, h4, h5 = st.columns([2.2, 1, 1.3, 1, 2.6])
+                side_pill = pill("多方", "green") if not x['is_short'] else pill("空方", "red")
+                h1.markdown(f"**{x['name']}（{x['code']}）** {side_pill}", unsafe_allow_html=True)
+                if x['tags']:
+                    h1.markdown(" ".join(pill(t, "gray") for t in x['tags']), unsafe_allow_html=True)
+                h2.metric("現價", f"{x['price']:.2f}" if x['price'] is not None else "—")
+                h3.metric("市值", f"{x['market_value']:,.0f}" if x['market_value'] is not None else "—")
+                if x['pnl_pct'] is not None:
+                    h4.metric("損益", f"{x['pnl_pct']:+.1f}%", delta=None)
+                else:
+                    h4.metric("損益", "—")
+                h5.markdown("**操作建議**")
+                h5.markdown(pill(x['action_text'], _action_level(x['action_color'])), unsafe_allow_html=True)
+                with st.expander("展開價位與風控細節"):
+                    d1, d2, d3, d4 = st.columns(4)
+                    d1.metric("加碼參考價", f"{x['pos_add_price']:.2f}" if x['pos_add_price'] is not None else "暫不建議",
+                              help="多方：拉回月線且分數未轉弱才建議加碼；空方：反彈到月線且分數偏空才建議加碼空單")
+                    d2.metric("停損價", f"{x['pos_stop']:.2f}" if x['pos_stop'] is not None else "—",
+                              f"距 {x['dist_stop_pct']:.1f}%" if x['dist_stop_pct'] is not None else None, delta_color="off",
+                              help="取月線結構停損與 ATR 波動度停損中較貼近現價者；空方方向相反")
+                    d3.metric("第一停利", f"{x['pos_tp1']:.2f}" if x['pos_tp1'] is not None else "—",
+                              f"距 {x['dist_tp1_pct']:.1f}%" if x['dist_tp1_pct'] is not None else None, delta_color="off")
+                    d4.metric("第二停利", f"{x['pos_tp2']:.2f}" if x['pos_tp2'] is not None else "—")
+                    e1, e2, e3, e4 = st.columns(4)
+                    e1.metric("股數", f"{int(x['shares']):,}")
+                    e2.metric("均價", f"{x['cost']:.2f}")
+                    e3.metric("佔比", f"{x['weight_pct']:.1f}%" if x['weight_pct'] is not None else "—")
+                    e4.metric("資金風險暴露", f"{x['risk_pct_of_capital']:.2f}%" if x['risk_pct_of_capital'] is not None else "—",
+                              help="萬一觸及停損，對你整體總資金造成的虧損%")
+                    st.caption(f"技術方向：{x['tech_direction'] or '資料不足'}　·　產業：{x['industry']}" + (f"　·　備註：{x['note']}" if x['note'] else ""))
+
+        with st.expander("📊 完整寬表格（所有欄位，適合匯出或大螢幕檢視）"):
+            st.dataframe(table_df, **STRETCH, hide_index=True)
         st.caption(
             "「部位」是你設定的多方／空方；「技術方向」是量化模型對這檔股票目前的技術面解讀，兩者不一定一致——例如空方部位搭配「技術面偏多」就是風險訊號。"
             "空方的「停損價」「停利價」已自動反轉方向計算（停損在上、停利在下）。"
@@ -2872,6 +2943,21 @@ elif app_mode == "💼 投資組合管理":
                 st.info(f"**{x['name']}（{x['code']}）**　{x['trailing_note']}")
 
         if total_mv > 0:
+            st.markdown("#### 🧪 壓力測試沙盒（What-if）")
+            shock = st.slider("假設大盤一天內漲跌多少 %？", -10.0, 10.0, -2.0, 0.5, key="pf_stress_shock",
+                              help="簡化假設：每檔持股都跟大盤等幅度同向變動（beta=1）。實際上高波動股通常跌更多、防禦股跌較少，這只是粗估。")
+            delta_total = 0.0
+            for x in rows:
+                if x['market_value'] is not None:
+                    move = x['market_value'] * shock / 100.0
+                    delta_total += (-move if x['is_short'] else move)
+            base_capital = total_capital if total_capital > 0 else total_mv
+            s1, s2, s3 = st.columns(3)
+            s1.metric("預估資產變動", f"${delta_total:+,.0f}", delta_color="normal" if delta_total >= 0 else "inverse")
+            s2.metric("佔總資金", f"{delta_total / base_capital * 100:+.2f}%" if base_capital > 0 else "—")
+            s3.metric("情境後總資產", f"${base_capital + delta_total:,.0f}")
+            st.caption("空方部位在大盤下跌時會獲利、上漲時虧損，已自動反向計算。這是等比例同步變動的粗估，不包含個股獨立風險、跳空與流動性問題。")
+
             st.markdown("#### 🥧 資產配置權重（個股）")
             weight_series = pd.Series(
                 {f"{x['name']}（{x['code']}）": x['weight_pct'] for x in rows if x['weight_pct'] is not None}
@@ -3443,7 +3529,36 @@ elif app_mode == "📝 策略日誌":
         show_cols = ["存入時間", "代號", "名稱", "方向", "分數區間", "存入時股價", "目前股價",
                     "參考買價", "近端停損", "距停損(%)", "第一停利", "距第一停利(%)", "第二停利",
                     "預計天數(歷史平均)", "狀態", "報酬(%)", "5日後(%)", "10日後(%)", "20日後(%)"]
-        st.dataframe(journal[show_cols], **STRETCH, hide_index=True)
+        def _status_level(txt):
+            t = str(txt)
+            if "停損" in t: return "red"
+            if "停利" in t: return "green"
+            return "yellow"
+
+        st.markdown("#### 📋 日誌一覽")
+        for _, jr in journal.iterrows():
+            with st.container(border=True):
+                j1, j2, j3, j4 = st.columns([2.4, 1, 1, 2])
+                j1.markdown(f"**{jr['名稱']}（{jr['代號']}）**　{jr['存入時間']}")
+                j2.metric("存入時股價", f"{jr['存入時股價']:.2f}")
+                ret = jr['報酬(%)']
+                j3.metric("目前報酬", f"{ret:+.1f}%" if pd.notna(ret) else "—")
+                j4.markdown("**狀態**")
+                j4.markdown(pill(str(jr['狀態']), _status_level(jr['狀態'])), unsafe_allow_html=True)
+                with st.expander("展開價位與後續表現"):
+                    x1, x2, x3, x4 = st.columns(4)
+                    x1.metric("參考買價", f"{jr['參考買價']:.2f}")
+                    x2.metric("近端停損", f"{jr['近端停損']:.2f}", f"距 {jr['距停損(%)']:.1f}%" if pd.notna(jr['距停損(%)']) else None, delta_color="off")
+                    x3.metric("第一停利", f"{jr['第一停利']:.2f}", f"距 {jr['距第一停利(%)']:.1f}%" if pd.notna(jr['距第一停利(%)']) else None, delta_color="off")
+                    x4.metric("第二停利", f"{jr['第二停利']:.2f}")
+                    y1, y2, y3 = st.columns(3)
+                    for col_, lab in ((y1, "5日後(%)"), (y2, "10日後(%)"), (y3, "20日後(%)")):
+                        v = jr[lab]
+                        col_.metric(lab, f"{v:+.1f}%" if pd.notna(v) else "尚未到期")
+                    st.caption(f"{jr['方向']}　·　{jr['分數區間']}　·　歷史平均約 {jr['預計天數(歷史平均)']} 天達標")
+
+        with st.expander("📊 完整寬表格（所有欄位）"):
+            st.dataframe(journal[show_cols], **STRETCH, hide_index=True)
 
         # ---- 視覺化回測績效快照：累積「存入時決策」在固定天數後的實際表現，形塑個人勝率資料庫 ----
         st.markdown("#### 📊 個人策略勝率資料庫（N 日後實際表現）")
