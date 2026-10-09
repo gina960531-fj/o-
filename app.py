@@ -27,21 +27,63 @@ def _st_version():
 # 新版 Streamlit 以 width="stretch" 取代 use_container_width；舊版維持原參數，兩者都能跑
 STRETCH = {"width": "stretch"} if _st_version() >= (1, 50) else {"use_container_width": True}
 
-st.set_page_config(page_title="專屬量化交易雷達", layout="wide")
+st.set_page_config(page_title="J喜金融｜量化投資戰情室", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
-.block-container {padding-top: 2rem; max-width: 1200px;}
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&display=swap');
+
+/* ===== 整體底色：淺藍灰底 + 白色懸浮卡片（對應草圖配色） ===== */
+.stApp {background: #eef4fb;}
+.block-container {padding-top: 1.4rem; max-width: 1240px;}
 div[data-testid="stMetric"] {
-    background: rgba(128,128,128,0.06);
+    background: #ffffff;
     padding: 14px 18px; border-radius: 14px;
-    border: 1px solid rgba(128,128,128,0.12);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    border: 1px solid #dde4ec;
+    box-shadow: 0 1px 4px rgba(44,52,64,0.06);
 }
 div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: #ffffff;
     border-radius: 14px !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    border-color: #dde4ec !important;
+    box-shadow: 0 1px 6px rgba(44,52,64,0.06);
 }
-/* 柔和莫蘭迪色系燈號膠囊：淺綠=多方/獲利/續抱，淺橘黃=觀望/接近關卡，乾燥玫瑰紅=停損/偏空/虧損 */
+div[data-testid="stExpander"] {background: #ffffff; border-radius: 12px;}
+
+/* ===== J喜金融 品牌標誌：維持草圖的灰底襯線字＋白色底塊，字體更精緻、J 加琥珀金 ===== */
+.jx-brand {
+    display: inline-block; padding: 8px 24px 8px 18px;
+    background: #e4e8ee; border: 1px solid #d3d9e1; border-radius: 6px;
+    box-shadow: -7px 7px 0 #ffffff, 0 1px 3px rgba(44,52,64,0.08);
+    font-family: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif; line-height: 1.1;
+}
+.jx-brand-j {font-size: 2.3rem; font-style: italic; font-weight: 700; color: #b08d57; margin-right: 3px;}
+.jx-brand-name {font-size: 1.8rem; font-weight: 700; color: #9a9184; letter-spacing: 0.16em;}
+.jx-brand-sub {display: block; font-size: 0.68rem; letter-spacing: 0.42em; color: #a9a398; margin-top: 2px; padding-left: 2px;}
+
+/* ===== 目前所在頁面標題（草圖中央的「首頁」方塊） ===== */
+.jx-title {
+    background: #c8d0da; color: #2c3440; font-weight: 800; font-size: 1.35rem;
+    text-align: center; padding: 12px 18px; border-radius: 6px; letter-spacing: 0.18em;
+    box-shadow: 0 1px 3px rgba(44,52,64,0.10);
+}
+.jx-date {text-align: right; color: #7b8794; font-size: 0.85rem; padding-top: 14px;}
+
+/* ===== 頂部導覽列：灰藍色長條 + 白色下拉選單槽（對應草圖） ===== */
+.st-key-jx_topnav {
+    background: #c8d0da; padding: 10px 22px; margin: 6px 0 14px 0;
+    clip-path: polygon(1.2% 0, 100% 0, 98.8% 100%, 0 100%);
+}
+.st-key-jx_topnav div[data-baseweb="select"] > div,
+.st-key-jx_topnav button {
+    background: #ffffff !important; border: none !important; border-radius: 4px !important;
+    min-height: 42px; font-weight: 700; color: #2c3440 !important;
+    box-shadow: 0 1px 2px rgba(44,52,64,0.12);
+}
+.st-key-jx_topnav button[kind="primary"] {background: #5b6b82 !important; color: #ffffff !important;}
+.st-key-jx_topnav button[kind="primary"] p {color: #ffffff !important;}
+.st-key-jx_topnav div[data-testid="stSelectbox"] label {display: none;}
+
+/* ===== 柔和莫蘭迪色系燈號膠囊：霧面灰綠=多方/獲利/續抱，溫暖米黃=觀望，乾燥玫瑰紅=停損/偏空/虧損 ===== */
 .qr-pill {
     display: inline-block; padding: 3px 11px; border-radius: 999px;
     font-size: 0.85em; font-weight: 600; margin: 1px 2px;
@@ -49,12 +91,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .qr-pill-green  {background: #dceee2; color: #2f6b4f;}
 .qr-pill-yellow {background: #faf0d7; color: #8a6d1f;}
 .qr-pill-red    {background: #f4dede; color: #9c4848;}
-.qr-pill-gray   {background: rgba(128,128,128,0.15); color: #666;}
-@media (prefers-color-scheme: dark) {
-    .qr-pill-green  {background: #1e3a2c; color: #8fd6ac;}
-    .qr-pill-yellow {background: #3a311a; color: #e8c877;}
-    .qr-pill-red    {background: #3a2222; color: #e39a9a;}
-}
+.qr-pill-gray   {background: #e8ecf1; color: #5f6b7a;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -506,14 +543,57 @@ if "_pending_app_mode" in st.session_state:
         st.session_state["stock_select_code"] = pending_code
 
 # ==========================================
-# 側邊欄：模式切換
+# 頂部導覽：J喜金融 品牌列 + 分組下拉選單
+# 八個功能分成四組下拉（再加獨立的「戰情室」首頁按鈕）。
+# 目前頁面存在 session_state["app_mode_radio"]；下拉選單用 on_change 回呼更新它，
+# 每次執行最前面再把各下拉的顯示值同步成目前頁面（所在的組顯示頁名，其餘組顯示組名）。
 # ==========================================
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2942/2942206.png", width=100)
-    st.header("系統控制台")
-    app_mode = st.radio("功能", ["🏠 戰情室首頁", "📈 個股分析", "💼 投資組合管理", "🤖 模擬自動交易", "⭐ 每日候選股", "🗂 觀察清單掃描", "📡 總經雷達", "📝 策略日誌", "📚 教學庫"], key="app_mode_radio")
-    st.markdown("---")
+HOME_MODE = "🏠 戰情室首頁"
+NAV_GROUPS = [
+    ("search",   "🔍 選股雷達", ["⭐ 每日候選股", "🗂 觀察清單掃描"]),
+    ("research", "📈 研究室",   ["📈 個股分析", "📡 總經雷達"]),
+    ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🤖 模擬自動交易"]),
+    ("academy",  "🎓 覆盤學院", ["📝 策略日誌", "📚 教學庫"]),
+]
+ALL_MODES = [HOME_MODE] + [m for _, _, ms in NAV_GROUPS for m in ms]
 
+if st.session_state.get("app_mode_radio") not in ALL_MODES:
+    st.session_state["app_mode_radio"] = HOME_MODE
+
+def _topnav_pick(gid):
+    chosen = st.session_state.get(f"topnav_{gid}")
+    if chosen in ALL_MODES:
+        st.session_state["app_mode_radio"] = chosen
+
+def _topnav_home():
+    st.session_state["app_mode_radio"] = HOME_MODE
+
+app_mode = st.session_state["app_mode_radio"]
+for _gid, _gtitle, _gmodes in NAV_GROUPS:       # 下拉顯示值同步（必須在 widget 建立之前）
+    st.session_state[f"topnav_{_gid}"] = app_mode if app_mode in _gmodes else None
+
+_group_of = {m: t for _, t, ms in NAV_GROUPS for m in ms}
+_crumb = "首頁" if app_mode == HOME_MODE else f"{_group_of[app_mode].split(' ', 1)[1]}　›　{app_mode.split(' ', 1)[1]}"
+
+hd1, hd2, hd3 = st.columns([2.2, 3, 2.2])
+hd1.markdown('<div class="jx-brand"><span class="jx-brand-j">J</span><span class="jx-brand-name">喜金融</span>'
+             '<span class="jx-brand-sub">量化投資戰情室</span></div>', unsafe_allow_html=True)
+hd2.markdown(f'<div class="jx-title">{_crumb}</div>', unsafe_allow_html=True)
+hd3.markdown(f'<div class="jx-date">{pd.Timestamp.now().strftime("%Y/%m/%d")}　資料來源：Yahoo Finance、證交所</div>', unsafe_allow_html=True)
+
+try:
+    _nav_box = st.container(key="jx_topnav")
+except TypeError:                                # 舊版 Streamlit 不支援 container(key=)，只是少了灰藍長條底色
+    _nav_box = st.container()
+with _nav_box:
+    _nc = st.columns([1.1, 1.5, 1.5, 1.5, 1.5, 2.2])
+    _nc[0].button("🏠 戰情室", key="topnav_home", on_click=_topnav_home,
+                  type="primary" if app_mode == HOME_MODE else "secondary", **STRETCH)
+    for _i, (_gid, _gtitle, _gmodes) in enumerate(NAV_GROUPS, start=1):
+        _nc[_i].selectbox(_gtitle, _gmodes, index=None, placeholder=f"{_gtitle} ▾", key=f"topnav_{_gid}",
+                          on_change=_topnav_pick, args=(_gid,), label_visibility="collapsed")
+
+with st.sidebar:
     # ------------------------------------------
     # 🧭 投資流程導覽：Top-Down（大環境→產業）接 Bottom-Up（好公司→估值→執行）五步驟，
     # 純粹把現有頁面串成一條建議路徑，不是新的分析功能。
