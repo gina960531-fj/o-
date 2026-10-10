@@ -52,45 +52,44 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 div[data-testid="stExpander"] {background: #ffffff; border-radius: 12px; border: 1px solid #c5d0df;}
 button[data-baseweb="tab"] {font-weight: 700;}
 
-/* ===== J喜金融 品牌標誌：灰底襯線字＋白色底塊（草圖風格），字更精緻、J 用琥珀金 ===== */
+/* ===== 頂部資訊列：左邊品牌、右邊日期與盤勢狀態，單一橫排 ===== */
+.jx-header {display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;}
 .jx-brand {
-    display: inline-block; padding: 8px 26px 8px 18px; white-space: nowrap;
-    background: #d3dae4; border: 1px solid #b4c0d0; border-radius: 6px;
-    box-shadow: -7px 7px 0 #ffffff, 0 2px 5px rgba(31,42,61,0.15);
+    display: inline-block; padding: 7px 22px 7px 16px; white-space: nowrap;
+    background: #d3dae4; border: 1px solid #b4c0d0; border-radius: 8px;
+    box-shadow: -6px 6px 0 #ffffff, 0 2px 5px rgba(31,42,61,0.15);
     font-family: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif; line-height: 1.1;
 }
-.jx-brand-j {font-size: 2.4rem; font-style: italic; font-weight: 700; color: #a67c37; margin-right: 3px;}
-.jx-brand-name {font-size: 1.85rem; font-weight: 700; color: #6f675b; letter-spacing: 0.16em;}
-.jx-brand-sub {display: block; font-size: 0.68rem; letter-spacing: 0.42em; color: #8c8579; margin-top: 2px; padding-left: 2px;}
+.jx-brand-j {font-size: 2.1rem; font-style: italic; font-weight: 700; color: #a67c37; margin-right: 3px;}
+.jx-brand-name {font-size: 1.65rem; font-weight: 700; color: #6f675b; letter-spacing: 0.16em;}
+.jx-brand-sub {display: inline-block; margin-left: 14px; font-size: 0.68rem; letter-spacing: 0.38em; color: #8c8579;}
+.jx-status {display: flex; align-items: center; gap: 10px; white-space: nowrap;}
+.jx-date {color: #55657b; font-size: 0.95rem; font-weight: 600;}
 
-/* ===== 目前所在頁面標題：深海軍藍底、香檳金字 ===== */
-.jx-title {
-    background: linear-gradient(135deg, #2f4064, #1f2a3d); color: #f1e4c8; font-weight: 800;
-    font-size: 1.3rem; text-align: center; padding: 12px 18px; border-radius: 6px;
-    letter-spacing: 0.18em; border-bottom: 3px solid #b08d57; box-shadow: 0 3px 8px rgba(31,42,61,0.25);
-}
-.jx-date {text-align: right; color: #55657b; font-size: 0.9rem; font-weight: 600; padding-top: 14px; white-space: nowrap;}
-
-/* ===== 頂部導覽列：深海軍藍長條＋白色下拉槽＋金色底線；寬度不夠時自動換行，不再截斷文字 ===== */
+/* ===== 頂部導覽卡片：白底、極細邊框、柔和陰影；首頁按鈕與各分組下拉在同一水平線 ===== */
 .st-key-jx_topnav {
-    background: linear-gradient(180deg, #2b3a55, #1f2a3d); padding: 10px 24px; margin: 6px 0 16px 0;
-    border-bottom: 3px solid #b08d57; box-shadow: 0 4px 12px rgba(31,42,61,0.25);
-    clip-path: polygon(1.2% 0, 100% 0, 98.8% 100%, 0 100%);
+    background: #ffffff; padding: 8px 12px; margin: 0 0 18px 0;
+    border: 1px solid #c5d0df; border-radius: 14px; box-shadow: 0 2px 10px rgba(31,42,61,0.08);
 }
-.st-key-jx_topnav div[data-testid="stHorizontalBlock"] {flex-wrap: wrap; gap: 0.6rem;}
-.st-key-jx_topnav [data-testid="stColumn"], .st-key-jx_topnav [data-testid="column"] {min-width: 170px; flex: 1 1 170px;}
+.st-key-jx_topnav div[data-testid="stHorizontalBlock"] {flex-wrap: wrap; gap: 0.6rem; align-items: center;}
+.st-key-jx_topnav [data-testid="stColumn"], .st-key-jx_topnav [data-testid="column"] {min-width: 150px; flex: 1 1 150px;}
+.st-key-jx_topnav div[data-testid="stSelectbox"], .st-key-jx_topnav div[data-testid="stButton"] {margin-bottom: 0;}
 .st-key-jx_topnav div[data-baseweb="select"] > div,
 .st-key-jx_topnav button {
-    background: #f7f9fc !important; border: none !important; border-radius: 4px !important;
-    min-height: 42px; font-weight: 700; color: #1f2a3d !important; white-space: nowrap;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    background: #f1f4f9 !important; border: 1px solid #d3dbe7 !important; border-radius: 10px !important;
+    min-height: 42px; font-weight: 700; color: #1f2a3d !important; white-space: nowrap; box-shadow: none !important;
 }
+.st-key-jx_topnav div[data-baseweb="select"] > div:hover, .st-key-jx_topnav button:hover {border-color: #8fa5c4 !important;}
+.st-key-jx_topnav button:focus, .st-key-jx_topnav button:active {outline: none !important; box-shadow: none !important;}
 .st-key-jx_topnav div[data-baseweb="select"] * {color: #1f2a3d;}
 .st-key-jx_topnav button[kind="primary"], .st-key-jx_topnav button[data-testid="stBaseButton-primary"] {
-    background: #b08d57 !important; color: #ffffff !important;
+    background: #2f4064 !important; border-color: #2f4064 !important; color: #ffffff !important;
 }
 .st-key-jx_topnav button[kind="primary"] p, .st-key-jx_topnav button[data-testid="stBaseButton-primary"] p {color: #ffffff !important;}
 .st-key-jx_topnav div[data-testid="stSelectbox"] label {display: none;}
+/* 隱藏下拉選單裡的「清除（叉叉）」按鈕，避免誤按；目前頁面會自動維持顯示 */
+.st-key-jx_topnav [aria-label="Clear value"], .st-key-jx_topnav [title="Clear value"],
+.st-key-jx_topnav [data-testid="stSelectboxClearButton"] {display: none !important;}
 
 /* ===== 燈號膠囊：色彩比之前更飽和一點，仍維持莫蘭迪的柔和感 ===== */
 .qr-pill {
@@ -559,7 +558,7 @@ if "_pending_app_mode" in st.session_state:
 # ==========================================
 HOME_MODE = "🏠 戰情室首頁"
 NAV_GROUPS = [
-    ("search",   "🔍 選股雷達", ["⭐ 每日候選股", "🗂 觀察清單掃描"]),
+    ("search",   "🔍 選股雷達", ["🔥 資金熱力圖", "⭐ 每日候選股", "🗂 觀察清單掃描"]),
     ("research", "📈 研究室",   ["📈 個股分析", "📡 總經雷達"]),
     ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🤖 模擬自動交易"]),
     ("academy",  "🎓 覆盤學院", ["📝 策略日誌", "📚 教學庫"]),
@@ -581,19 +580,27 @@ app_mode = st.session_state["app_mode_radio"]
 for _gid, _gtitle, _gmodes in NAV_GROUPS:       # 下拉顯示值同步（必須在 widget 建立之前）
     st.session_state[f"topnav_{_gid}"] = app_mode if app_mode in _gmodes else None
 
-_group_of = {m: t for _, t, ms in NAV_GROUPS for m in ms}
-_crumb = "首頁" if app_mode == HOME_MODE else f"{_group_of[app_mode].split(' ', 1)[1]}　›　{app_mode.split(' ', 1)[1]}"
+def market_status():
+    """台北時間的簡易盤勢狀態（只判斷週末與一般交易時段，不含國定假日）。"""
+    now = pd.Timestamp.now(tz="Asia/Taipei")
+    if now.weekday() >= 5:
+        return "週末休市", "gray"
+    hhmm = now.hour * 100 + now.minute
+    if 900 <= hhmm <= 1330:
+        return "盤中", "green"
+    return ("盤前" if hhmm < 900 else "已收盤"), "yellow"
 
-hd1, hd2, hd3 = st.columns([2.4, 2.6, 1.4])
-hd1.markdown('<div class="jx-brand"><span class="jx-brand-j">J</span><span class="jx-brand-name">喜金融</span>'
-             '<span class="jx-brand-sub">量化投資戰情室</span></div>', unsafe_allow_html=True)
-hd2.markdown(f'<div class="jx-title">{_crumb}</div>', unsafe_allow_html=True)
-hd3.markdown(f'<div class="jx-date">{pd.Timestamp.now().strftime("%Y/%m/%d")}</div>', unsafe_allow_html=True)
+_ms_text, _ms_level = market_status()
+st.markdown(
+    '<div class="jx-header"><div class="jx-brand"><span class="jx-brand-j">J</span><span class="jx-brand-name">喜金融</span>'
+    '<span class="jx-brand-sub">量化投資戰情室</span></div>'
+    f'<div class="jx-status"><span class="jx-date">📅 {pd.Timestamp.now(tz="Asia/Taipei").strftime("%Y/%m/%d")}</span>'
+    f'{pill(_ms_text, _ms_level)}</div></div>', unsafe_allow_html=True)
 
 try:
     _nav_box = st.container(key="jx_topnav")
-except TypeError:                                # 舊版 Streamlit 不支援 container(key=)，只是少了深色長條底色
-    _nav_box = st.container()
+except TypeError:                                # 舊版 Streamlit 不支援 container(key=)：退回一般卡片框
+    _nav_box = st.container(border=True)
 
 def _slot(gid):
     try:
@@ -602,7 +609,7 @@ def _slot(gid):
         return st.container()
 
 with _nav_box:
-    _nc = st.columns([1.1, 1.5, 1.5, 1.5, 1.5])
+    _nc = st.columns([1, 1.4, 1.4, 1.4, 1.4])
     _nc[0].button("🏠 戰情室", key="topnav_home", on_click=_topnav_home,
                   type="primary" if app_mode == HOME_MODE else "secondary", **STRETCH)
     for _i, (_gid, _gtitle, _gmodes) in enumerate(NAV_GROUPS, start=1):
@@ -612,8 +619,8 @@ with _nav_box:
                              on_change=_topnav_pick, args=(_gid,), label_visibility="collapsed")
 
 _active_gid = next((g for g, _, ms in NAV_GROUPS if app_mode in ms), None)
-if _active_gid:                                   # 目前所在的那一組，下拉槽改成金色
-    st.markdown(f"<style>.st-key-jx_slot_{_active_gid} div[data-baseweb='select'] > div {{background:#b08d57 !important;}}"
+if _active_gid:                                   # 目前所在的那一組：與首頁按鈕同款的深藍底白字
+    st.markdown(f"<style>.st-key-jx_slot_{_active_gid} div[data-baseweb='select'] > div {{background:#2f4064 !important; border-color:#2f4064 !important;}}"
                 f".st-key-jx_slot_{_active_gid} div[data-baseweb='select'] * {{color:#ffffff !important; fill:#ffffff !important;}}</style>",
                 unsafe_allow_html=True)
 
@@ -2360,6 +2367,99 @@ def build_smart_pool(directory, size=150):
             break
     return pool, True
 
+# ==========================================
+# 🔥 資金流動熱力圖：資料抓取與產業彙總
+# 方塊大小＝成交值（收盤價×成交股數，近似值）、顏色＝當日漲跌幅。
+# 注意這是「成交熱度＋價格方向」，不是真正的資金淨流入（那需要法人買賣超資料）。
+# ==========================================
+def _heat_row(t, close_s, vol_s):
+    close_s = close_s.dropna()
+    if len(close_s) < 2:
+        return None
+    last, prev = float(close_s.iloc[-1]), float(close_s.iloc[-2])
+    vol = float(vol_s.dropna().iloc[-1]) if len(vol_s.dropna()) else 0.0
+    if prev <= 0 or last <= 0 or vol <= 0:
+        return None
+    return dict(ticker=t, close=last, prev=prev, chg=(last / prev - 1) * 100, value=last * vol,
+                asof=pd.to_datetime(close_s.index[-1]).strftime("%m/%d"))
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_heat_quotes(tickers):
+    """批次抓最近幾天的收盤價與成交量；批次下載失敗或漏掉的個股，退回逐檔補抓。"""
+    rows, got = [], set()
+    try:
+        raw = yf.download(list(tickers), period="5d", group_by="ticker", progress=False, threads=True, auto_adjust=False)
+        if raw is not None and not raw.empty and isinstance(raw.columns, pd.MultiIndex):
+            top = set(raw.columns.get_level_values(0))
+            for t in tickers:
+                if t in top:
+                    r = _heat_row(t, raw[t]["Close"], raw[t]["Volume"])
+                    if r:
+                        rows.append(r); got.add(t)
+    except Exception:
+        pass
+    missing = [t for t in tickers if t not in got]
+    if missing:
+        def one(t):
+            try:
+                h = yf.Ticker(t).history(period="5d")
+                return _heat_row(t, h["Close"], h["Volume"]) if h is not None and not h.empty else None
+            except Exception:
+                return None
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            rows += [r for r in ex.map(one, missing) if r]
+    return pd.DataFrame(rows)
+
+def heatmap_pool(directory, size):
+    """挑出『成交量前N大』的上市櫃個股（不含ETF）；抓不到全市場成交量就退回內建常用股名單。"""
+    codes = [c for c, v in directory.items() if v.get("ind") not in ("ETF", None)]
+    vol_map = get_market_volume_snapshot()
+    if vol_map:
+        ranked = sorted([c for c in codes if c in vol_map], key=lambda c: vol_map[c], reverse=True)[:size]
+        if len(ranked) >= 20:
+            return ranked, True
+    fallback = [c for c, v in BUILTIN_STOCKS.items() if v["ind"] != "ETF"]
+    return fallback[:size], False
+
+def build_sector_table(quotes, directory):
+    q = quotes.copy()
+    q["code"] = q["ticker"].str.split(".").str[0]
+    q["name"] = q["code"].map(lambda c: directory.get(c, {}).get("name") or c)
+    q["sector"] = q["code"].map(lambda c: directory.get(c, {}).get("ind") or "其他")
+    sec = []
+    for name, g in q.groupby("sector"):
+        w = g["value"].sum()
+        sec.append(dict(sector=name, value=w, chg=(g["chg"] * g["value"]).sum() / w if w > 0 else 0.0,
+                        up=int((g["chg"] > 0).sum()), n=len(g)))
+    sec = pd.DataFrame(sec).sort_values("value", ascending=False).reset_index(drop=True)
+    sec["share"] = sec["value"] / sec["value"].sum() * 100
+    return q, sec
+
+HEAT_SCALES = {
+    "台股慣例（紅漲綠跌）": [[0, "#4f8f6b"], [0.35, "#a9cdb7"], [0.5, "#eceff3"], [0.65, "#e8b9b9"], [1, "#c0504d"]],
+    "國際慣例（綠漲紅跌）": [[0, "#c0504d"], [0.35, "#e8b9b9"], [0.5, "#eceff3"], [0.65, "#a9cdb7"], [1, "#4f8f6b"]],
+}
+
+def draw_sector_treemap(q, sec, scale, show_stocks=True):
+    ids, labels, parents, values, colors, custom = [], [], [], [], [], []
+    for _, r in sec.iterrows():
+        ids.append(f"S|{r['sector']}"); labels.append(r["sector"]); parents.append("")
+        values.append(r["value"]); colors.append(r["chg"]); custom.append([r["chg"], r["share"], f"{int(r['up'])}/{int(r['n'])} 檔上漲"])
+    if show_stocks:
+        for _, r in q.iterrows():
+            ids.append(f"T|{r['code']}"); labels.append(f"{r['name']}（{r['code']}）"); parents.append(f"S|{r['sector']}")
+            values.append(r["value"]); colors.append(r["chg"])
+            custom.append([r["chg"], r["value"] / q["value"].sum() * 100, f"收盤 {r['close']:.2f}"])
+    fig = go.Figure(go.Treemap(
+        ids=ids, labels=labels, parents=parents, values=values, branchvalues="total",
+        customdata=custom, texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}%", textposition="middle center",
+        hovertemplate="<b>%{label}</b><br>漲跌 %{customdata[0]:+.2f}%<br>成交值占比 %{customdata[1]:.1f}%<br>%{customdata[2]}<extra></extra>",
+        marker=dict(colors=colors, colorscale=scale, cmin=-4, cmax=4, cmid=0, line=dict(width=1.5, color="#ffffff"),
+                    colorbar=dict(title="漲跌 %", thickness=12, len=0.7)),
+        pathbar=dict(visible=False), tiling=dict(pad=3)))
+    fig.update_layout(height=600, margin=dict(l=4, r=4, t=4, b=4), paper_bgcolor="rgba(0,0,0,0)", font=dict(size=14))
+    return fig
+
 def resolve_display_name(tk, code_bare, info, directory=None):
     """
     強制優先順序：INDUSTRY_MAP 手打的中文名 > 全市場 directory（證交所/櫃買官方簡稱）> Yahoo 英文名 > 代號本身。
@@ -2681,6 +2781,13 @@ if app_mode == "🏠 戰情室首頁":
     st.divider()
     st.caption("⚠️ 以上所有數字皆為規則式試算，非統計顯著驗證過的預測模型，也不構成投資建議；過去表現不代表未來績效。")
 
+
+    with st.container(border=True):
+        _hc1, _hc2 = st.columns([4, 1.2])
+        _hc1.markdown("**🔥 今天的錢跑去哪個族群？**　看各產業的成交熱度與漲跌，3 秒掌握資金流向。")
+        if _hc2.button("查看資金熱力圖", key="home_to_heatmap", **STRETCH):
+            st.session_state["_pending_app_mode"] = "🔥 資金熱力圖"
+            st.rerun()
 
     st.divider()
     st.markdown("#### 🧭 投資流程導覽（由上而下選方向，由下而上挑好公司）")
@@ -3229,6 +3336,66 @@ elif app_mode == "🤖 模擬自動交易":
 # ==========================================
 # 模式三：🗂 觀察清單掃描
 # ==========================================
+elif app_mode == "🔥 資金熱力圖":
+    st.title("🔥 資金流動熱力圖")
+    st.caption("方塊越大＝成交值越大，顏色＝今日漲跌幅。3 秒看出今天的錢集中在哪個族群、哪些族群在熄火。")
+
+    _hm_directory, _hm_live = get_directory()
+    with st.container(border=True):
+        hc1, hc2, hc3 = st.columns([1.4, 1.6, 1.4])
+        hm_scale_name = hc1.radio("配色習慣", list(HEAT_SCALES.keys()), key="hm_scale")
+        hm_size = hc2.slider("取成交量前幾大個股", 40, 300, 120, 20, key="hm_size",
+                             help="數字越大涵蓋越完整，但要抓的個股資料越多，首次載入會久一點（之後 10 分鐘內有快取）。")
+        hm_stocks = hc3.checkbox("展開顯示個股方塊", value=True, key="hm_stocks",
+                                 help="取消勾選只看產業層級，畫面更簡潔。")
+
+    _pool, _pool_ok = heatmap_pool(_hm_directory, hm_size)
+    if not _pool_ok:
+        st.warning("全市場成交量排行暫時抓不到（證交所來源），已改用內建的常用股名單，涵蓋範圍較小。")
+    _tickers = tuple(c + _hm_directory.get(c, {}).get("suffix", ".TW") for c in _pool)
+    with st.spinner(f"抓取 {len(_tickers)} 檔個股報價中…（首次載入較久）"):
+        _quotes = fetch_heat_quotes(_tickers)
+
+    if _quotes is None or _quotes.empty or len(_quotes) < 5:
+        st.error("抓不到足夠的報價資料，無法繪製熱力圖。請稍後再試，或檢查網路連線。")
+    else:
+        _q, _sec = build_sector_table(_quotes, _hm_directory)
+        _big = _sec[_sec["share"] >= 3]
+        _best = (_big if not _big.empty else _sec).sort_values("chg", ascending=False).iloc[0]
+        _worst = (_big if not _big.empty else _sec).sort_values("chg", ascending=True).iloc[0]
+        _top = _sec.iloc[0]
+        st.markdown(
+            f"**成交最集中**：{_top['sector']}（占 {_top['share']:.0f}%，加權 {_top['chg']:+.2f}%）　"
+            f"**漲幅最強**：{_best['sector']}（{_best['chg']:+.2f}%）　"
+            f"**跌幅最重**：{_worst['sector']}（{_worst['chg']:+.2f}%）")
+        st.caption(f"資料日期 {_q['asof'].mode().iloc[0]}　·　樣本 {len(_q)} 檔　·　上漲 {int((_q['chg'] > 0).sum())} 檔、下跌 {int((_q['chg'] < 0).sum())} 檔")
+
+        st.plotly_chart(draw_sector_treemap(_q, _sec, HEAT_SCALES[hm_scale_name], hm_stocks), **STRETCH, key="sector_heatmap")
+
+        st.markdown("#### 📋 族群資金一覽")
+        _view = pd.DataFrame({
+            "族群": _sec["sector"], "成交值占比(%)": _sec["share"].round(1), "加權漲跌(%)": _sec["chg"].round(2),
+            "上漲家數": _sec["up"].astype(int).astype(str) + " / " + _sec["n"].astype(int).astype(str)})
+        st.dataframe(_view, hide_index=True, **STRETCH)
+
+        _sc1, _sc2 = st.columns(2)
+        with _sc1:
+            st.markdown("**🟢 領漲個股（成交值前段班）**")
+            for _, r in _q.sort_values("chg", ascending=False).head(5).iterrows():
+                st.markdown(f"- {r['name']}（{r['code']}）{r['chg']:+.2f}%　<span style='color:#7b8794'>{r['sector']}</span>", unsafe_allow_html=True)
+        with _sc2:
+            st.markdown("**🔴 領跌個股**")
+            for _, r in _q.sort_values("chg", ascending=True).head(5).iterrows():
+                st.markdown(f"- {r['name']}（{r['code']}）{r['chg']:+.2f}%　<span style='color:#7b8794'>{r['sector']}</span>", unsafe_allow_html=True)
+
+        with st.expander("❓ 這張圖怎麼看、有什麼限制"):
+            st.markdown(
+                "- **方塊大小**＝成交值（收盤價×成交股數，近似值），代表錢集中在哪裡。\n"
+                "- **顏色**＝當日漲跌幅（族群顏色是依成交值加權的平均）。大方塊又大漲＝資金湧入；大方塊卻下跌＝主力撤退或獲利了結。\n"
+                "- **這不是真正的資金淨流入**：成交值是買賣雙方的總量，不能分辨買超或賣超；要看主力動向還要搭配法人買賣超。\n"
+                "- **只涵蓋成交量前 N 大**的個股，冷門股與小型股沒有納入；產業分類採證交所產業別，與市場慣用的題材分類（如 AI、CoWoS）不同。\n"
+                "- 資料來自 Yahoo Finance，可能有延遲，點方塊可放大該族群。")
+
 elif app_mode == "⭐ 每日候選股":
     st.title("⭐ 每日量化候選股")
     st.warning(
