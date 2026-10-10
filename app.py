@@ -27,71 +27,80 @@ def _st_version():
 # 新版 Streamlit 以 width="stretch" 取代 use_container_width；舊版維持原參數，兩者都能跑
 STRETCH = {"width": "stretch"} if _st_version() >= (1, 50) else {"use_container_width": True}
 
-st.set_page_config(page_title="J喜金融｜量化投資戰情室", page_icon="📈", layout="wide")
+st.set_page_config(page_title="J喜金融｜量化投資戰情室", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700&display=swap');
 
-/* ===== 整體底色：淺藍灰底 + 白色懸浮卡片（對應草圖配色） ===== */
-.stApp {background: #eef4fb;}
-.block-container {padding-top: 1.4rem; max-width: 1240px;}
+/* ===== 底色與卡片：較深的藍灰底，白色卡片靠邊框與陰影浮起來 ===== */
+.stApp {background: linear-gradient(180deg, #d3deec 0, #e2e9f3 380px, #e2e9f3 100%);}
+header[data-testid="stHeader"] {background: transparent;}
+.block-container {padding-top: 1.2rem; max-width: 1280px;}
+h1, h2, h3 {color: #1f2a3d; font-weight: 800;}
+h4 {color: #1f2a3d; border-left: 4px solid #b08d57; padding-left: 10px; margin-top: 0.4rem;}
 div[data-testid="stMetric"] {
-    background: #ffffff;
-    padding: 14px 18px; border-radius: 14px;
-    border: 1px solid #dde4ec;
-    box-shadow: 0 1px 4px rgba(44,52,64,0.06);
+    background: #ffffff; padding: 14px 18px; border-radius: 12px;
+    border: 1px solid #c5d0df; border-left: 4px solid #8fa5c4;
+    box-shadow: 0 2px 8px rgba(31,42,61,0.10);
 }
+div[data-testid="stMetric"] label, div[data-testid="stMetricLabel"] {color: #55657b !important; font-weight: 600;}
+div[data-testid="stMetricValue"] {color: #1f2a3d;}
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: #ffffff;
-    border-radius: 14px !important;
-    border-color: #dde4ec !important;
-    box-shadow: 0 1px 6px rgba(44,52,64,0.06);
+    background: #ffffff; border-radius: 14px !important;
+    border-color: #c5d0df !important; box-shadow: 0 2px 10px rgba(31,42,61,0.10);
 }
-div[data-testid="stExpander"] {background: #ffffff; border-radius: 12px;}
+div[data-testid="stExpander"] {background: #ffffff; border-radius: 12px; border: 1px solid #c5d0df;}
+button[data-baseweb="tab"] {font-weight: 700;}
 
-/* ===== J喜金融 品牌標誌：維持草圖的灰底襯線字＋白色底塊，字體更精緻、J 加琥珀金 ===== */
+/* ===== J喜金融 品牌標誌：灰底襯線字＋白色底塊（草圖風格），字更精緻、J 用琥珀金 ===== */
 .jx-brand {
-    display: inline-block; padding: 8px 24px 8px 18px;
-    background: #e4e8ee; border: 1px solid #d3d9e1; border-radius: 6px;
-    box-shadow: -7px 7px 0 #ffffff, 0 1px 3px rgba(44,52,64,0.08);
+    display: inline-block; padding: 8px 26px 8px 18px; white-space: nowrap;
+    background: #d3dae4; border: 1px solid #b4c0d0; border-radius: 6px;
+    box-shadow: -7px 7px 0 #ffffff, 0 2px 5px rgba(31,42,61,0.15);
     font-family: 'Noto Serif TC', 'Songti TC', 'PMingLiU', serif; line-height: 1.1;
 }
-.jx-brand-j {font-size: 2.3rem; font-style: italic; font-weight: 700; color: #b08d57; margin-right: 3px;}
-.jx-brand-name {font-size: 1.8rem; font-weight: 700; color: #9a9184; letter-spacing: 0.16em;}
-.jx-brand-sub {display: block; font-size: 0.68rem; letter-spacing: 0.42em; color: #a9a398; margin-top: 2px; padding-left: 2px;}
+.jx-brand-j {font-size: 2.4rem; font-style: italic; font-weight: 700; color: #a67c37; margin-right: 3px;}
+.jx-brand-name {font-size: 1.85rem; font-weight: 700; color: #6f675b; letter-spacing: 0.16em;}
+.jx-brand-sub {display: block; font-size: 0.68rem; letter-spacing: 0.42em; color: #8c8579; margin-top: 2px; padding-left: 2px;}
 
-/* ===== 目前所在頁面標題（草圖中央的「首頁」方塊） ===== */
+/* ===== 目前所在頁面標題：深海軍藍底、香檳金字 ===== */
 .jx-title {
-    background: #c8d0da; color: #2c3440; font-weight: 800; font-size: 1.35rem;
-    text-align: center; padding: 12px 18px; border-radius: 6px; letter-spacing: 0.18em;
-    box-shadow: 0 1px 3px rgba(44,52,64,0.10);
+    background: linear-gradient(135deg, #2f4064, #1f2a3d); color: #f1e4c8; font-weight: 800;
+    font-size: 1.3rem; text-align: center; padding: 12px 18px; border-radius: 6px;
+    letter-spacing: 0.18em; border-bottom: 3px solid #b08d57; box-shadow: 0 3px 8px rgba(31,42,61,0.25);
 }
-.jx-date {text-align: right; color: #7b8794; font-size: 0.85rem; padding-top: 14px;}
+.jx-date {text-align: right; color: #55657b; font-size: 0.9rem; font-weight: 600; padding-top: 14px; white-space: nowrap;}
 
-/* ===== 頂部導覽列：灰藍色長條 + 白色下拉選單槽（對應草圖） ===== */
+/* ===== 頂部導覽列：深海軍藍長條＋白色下拉槽＋金色底線；寬度不夠時自動換行，不再截斷文字 ===== */
 .st-key-jx_topnav {
-    background: #c8d0da; padding: 10px 22px; margin: 6px 0 14px 0;
+    background: linear-gradient(180deg, #2b3a55, #1f2a3d); padding: 10px 24px; margin: 6px 0 16px 0;
+    border-bottom: 3px solid #b08d57; box-shadow: 0 4px 12px rgba(31,42,61,0.25);
     clip-path: polygon(1.2% 0, 100% 0, 98.8% 100%, 0 100%);
 }
+.st-key-jx_topnav div[data-testid="stHorizontalBlock"] {flex-wrap: wrap; gap: 0.6rem;}
+.st-key-jx_topnav [data-testid="stColumn"], .st-key-jx_topnav [data-testid="column"] {min-width: 170px; flex: 1 1 170px;}
 .st-key-jx_topnav div[data-baseweb="select"] > div,
 .st-key-jx_topnav button {
-    background: #ffffff !important; border: none !important; border-radius: 4px !important;
-    min-height: 42px; font-weight: 700; color: #2c3440 !important;
-    box-shadow: 0 1px 2px rgba(44,52,64,0.12);
+    background: #f7f9fc !important; border: none !important; border-radius: 4px !important;
+    min-height: 42px; font-weight: 700; color: #1f2a3d !important; white-space: nowrap;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
 }
-.st-key-jx_topnav button[kind="primary"] {background: #5b6b82 !important; color: #ffffff !important;}
-.st-key-jx_topnav button[kind="primary"] p {color: #ffffff !important;}
+.st-key-jx_topnav div[data-baseweb="select"] * {color: #1f2a3d;}
+.st-key-jx_topnav button[kind="primary"], .st-key-jx_topnav button[data-testid="stBaseButton-primary"] {
+    background: #b08d57 !important; color: #ffffff !important;
+}
+.st-key-jx_topnav button[kind="primary"] p, .st-key-jx_topnav button[data-testid="stBaseButton-primary"] p {color: #ffffff !important;}
 .st-key-jx_topnav div[data-testid="stSelectbox"] label {display: none;}
 
-/* ===== 柔和莫蘭迪色系燈號膠囊：霧面灰綠=多方/獲利/續抱，溫暖米黃=觀望，乾燥玫瑰紅=停損/偏空/虧損 ===== */
+/* ===== 燈號膠囊：色彩比之前更飽和一點，仍維持莫蘭迪的柔和感 ===== */
 .qr-pill {
     display: inline-block; padding: 3px 11px; border-radius: 999px;
-    font-size: 0.85em; font-weight: 600; margin: 1px 2px;
+    font-size: 0.85em; font-weight: 700; margin: 1px 2px;
 }
-.qr-pill-green  {background: #dceee2; color: #2f6b4f;}
-.qr-pill-yellow {background: #faf0d7; color: #8a6d1f;}
-.qr-pill-red    {background: #f4dede; color: #9c4848;}
-.qr-pill-gray   {background: #e8ecf1; color: #5f6b7a;}
+.qr-pill-green  {background: #cfe7d8; color: #245c40;}
+.qr-pill-yellow {background: #f6e6b8; color: #7a5d12;}
+.qr-pill-red    {background: #f0cccc; color: #8f3535;}
+.qr-pill-gray   {background: #d9e0ea; color: #44505f;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -575,43 +584,38 @@ for _gid, _gtitle, _gmodes in NAV_GROUPS:       # 下拉顯示值同步（必須
 _group_of = {m: t for _, t, ms in NAV_GROUPS for m in ms}
 _crumb = "首頁" if app_mode == HOME_MODE else f"{_group_of[app_mode].split(' ', 1)[1]}　›　{app_mode.split(' ', 1)[1]}"
 
-hd1, hd2, hd3 = st.columns([2.2, 3, 2.2])
+hd1, hd2, hd3 = st.columns([2.4, 2.6, 1.4])
 hd1.markdown('<div class="jx-brand"><span class="jx-brand-j">J</span><span class="jx-brand-name">喜金融</span>'
              '<span class="jx-brand-sub">量化投資戰情室</span></div>', unsafe_allow_html=True)
 hd2.markdown(f'<div class="jx-title">{_crumb}</div>', unsafe_allow_html=True)
-hd3.markdown(f'<div class="jx-date">{pd.Timestamp.now().strftime("%Y/%m/%d")}　資料來源：Yahoo Finance、證交所</div>', unsafe_allow_html=True)
+hd3.markdown(f'<div class="jx-date">{pd.Timestamp.now().strftime("%Y/%m/%d")}</div>', unsafe_allow_html=True)
 
 try:
     _nav_box = st.container(key="jx_topnav")
-except TypeError:                                # 舊版 Streamlit 不支援 container(key=)，只是少了灰藍長條底色
+except TypeError:                                # 舊版 Streamlit 不支援 container(key=)，只是少了深色長條底色
     _nav_box = st.container()
+
+def _slot(gid):
+    try:
+        return st.container(key=f"jx_slot_{gid}")
+    except TypeError:
+        return st.container()
+
 with _nav_box:
-    _nc = st.columns([1.1, 1.5, 1.5, 1.5, 1.5, 2.2])
+    _nc = st.columns([1.1, 1.5, 1.5, 1.5, 1.5])
     _nc[0].button("🏠 戰情室", key="topnav_home", on_click=_topnav_home,
                   type="primary" if app_mode == HOME_MODE else "secondary", **STRETCH)
     for _i, (_gid, _gtitle, _gmodes) in enumerate(NAV_GROUPS, start=1):
-        _nc[_i].selectbox(_gtitle, _gmodes, index=None, placeholder=f"{_gtitle} ▾", key=f"topnav_{_gid}",
-                          on_change=_topnav_pick, args=(_gid,), label_visibility="collapsed")
+        with _nc[_i]:
+            with _slot(_gid):
+                st.selectbox(_gtitle, _gmodes, index=None, placeholder=f"{_gtitle} ▾", key=f"topnav_{_gid}",
+                             on_change=_topnav_pick, args=(_gid,), label_visibility="collapsed")
 
-with st.sidebar:
-    # ------------------------------------------
-    # 🧭 投資流程導覽：Top-Down（大環境→產業）接 Bottom-Up（好公司→估值→執行）五步驟，
-    # 純粹把現有頁面串成一條建議路徑，不是新的分析功能。
-    # ------------------------------------------
-    with st.expander("🧭 投資流程導覽（五步驟）"):
-        NAV_STEPS = [
-            ("1️⃣ 大環境分析", "判斷市場大方向：利率、匯率、VIX、費半", "📡 總經雷達"),
-            ("2️⃣ 產業分析", "選對賽道：用產業篩選＋同業比較找出成長方向", "⭐ 每日候選股"),
-            ("3️⃣ 好公司分析", "質化審查：商業模式、護城河、上下游地位", "📈 個股分析"),
-            ("4️⃣ 合理價格評估", "本益比／殖利率估值，判斷貴不貴", "📈 個股分析"),
-            ("5️⃣ 執行與風險控管", "部位大小、停損停利、持續追蹤", "💼 投資組合管理"),
-        ]
-        for title, desc, target_mode in NAV_STEPS:
-            st.caption(f"**{title}**　{desc}")
-            if st.button(f"前往「{target_mode}」", key=f"nav_{title}", **STRETCH):
-                st.session_state["_pending_app_mode"] = target_mode
-                st.rerun()
-        st.caption("這是建議路徑，不是強制順序；步驟 3／4 都在「個股分析」裡，切過去後選對應分頁即可。")
+_active_gid = next((g for g, _, ms in NAV_GROUPS if app_mode in ms), None)
+if _active_gid:                                   # 目前所在的那一組，下拉槽改成金色
+    st.markdown(f"<style>.st-key-jx_slot_{_active_gid} div[data-baseweb='select'] > div {{background:#b08d57 !important;}}"
+                f".st-key-jx_slot_{_active_gid} div[data-baseweb='select'] * {{color:#ffffff !important; fill:#ffffff !important;}}</style>",
+                unsafe_allow_html=True)
 
 # ==========================================
 # 繪圖函數：基礎K線與進階型態 (教學區用)
@@ -2677,6 +2681,26 @@ if app_mode == "🏠 戰情室首頁":
     st.divider()
     st.caption("⚠️ 以上所有數字皆為規則式試算，非統計顯著驗證過的預測模型，也不構成投資建議；過去表現不代表未來績效。")
 
+
+    st.divider()
+    st.markdown("#### 🧭 投資流程導覽（由上而下選方向，由下而上挑好公司）")
+    NAV_STEPS = [
+        ("1️⃣ 大環境分析", "判斷市場大方向：利率、匯率、VIX、費半", "📡 總經雷達"),
+        ("2️⃣ 產業分析", "選對賽道：用產業篩選＋同業比較找出成長方向", "⭐ 每日候選股"),
+        ("3️⃣ 好公司分析", "質化審查：商業模式、護城河、上下游地位", "📈 個股分析"),
+        ("4️⃣ 合理價格評估", "本益比／殖利率估值，判斷貴不貴（在個股分析的「財務體質」分頁）", "📈 個股分析"),
+        ("5️⃣ 執行與風險控管", "部位大小、停損停利、持續追蹤", "💼 投資組合管理"),
+    ]
+    for _col, (_t, _d, _target) in zip(st.columns(5), NAV_STEPS):
+        with _col:
+            with st.container(border=True):
+                st.markdown(f"**{_t}**")
+                st.caption(_d)
+                if st.button(f"前往 {_target.split(' ', 1)[1]}", key=f"nav_{_t}", **STRETCH):
+                    st.session_state["_pending_app_mode"] = _target
+                    st.rerun()
+    st.caption("這是建議路徑，不是強制順序。")
+
 elif app_mode == "📚 教學庫":
     st.title("📚 量化交易與技術指標大百科")
     st.markdown("收錄實戰交易中最核心的技術分析工具與型態圖鑑。")
@@ -3214,52 +3238,56 @@ elif app_mode == "⭐ 每日候選股":
     directory, _live_ok = get_directory()
     watchlist = get_watchlist()
 
-    with st.sidebar:
+    with st.container(border=True):
+        st.markdown("#### ⚙️ 掃描設定")
+        cp1, cp2 = st.columns([1.2, 2])
         pool_options = ["🕒 自動觀察清單" if watchlist else "🕒 自動觀察清單（目前是空的）", "🚀 全市場流動性池", "✍️ 自訂清單"]
-        pool_choice = st.radio("候選池", pool_options)
-        if pool_choice.startswith("✍️"):
-            pool_raw = st.text_area("輸入股票代號（逗號或換行分隔）", value=", ".join(INDUSTRY_MAP.keys()), height=100)
-            pool = list(dict.fromkeys(normalize_ticker(t) for t in pool_raw.replace("，", ",").replace("\n", ",").split(",") if t.strip()))
-        elif pool_choice.startswith("🚀"):
-            pool_size = st.slider("流動性池大小（前N大成交量）", 30, 300, 100, 10,
-                                  help="數字越大涵蓋越完整，但要抓的個股資料也越多，掃描時間會拉長。")
-            pool = None  # 實際按下掃描時才抓（見下方 run_btn）
-        else:
-            pool = watchlist or list(INDUSTRY_MAP.keys())
-            st.caption(f"目前共 {len(pool)} 檔（在「📈 個股分析」查看過的股票會自動加進來）")
+        with cp1:
+            pool_choice = st.radio("候選池", pool_options)
+        with cp2:
+            if pool_choice.startswith("✍️"):
+                pool_raw = st.text_area("輸入股票代號（逗號或換行分隔）", value=", ".join(INDUSTRY_MAP.keys()), height=100)
+                pool = list(dict.fromkeys(normalize_ticker(t) for t in pool_raw.replace("，", ",").replace("\n", ",").split(",") if t.strip()))
+            elif pool_choice.startswith("🚀"):
+                pool_size = st.slider("流動性池大小（前N大成交量）", 30, 300, 100, 10,
+                                      help="數字越大涵蓋越完整，但要抓的個股資料也越多，掃描時間會拉長。")
+                pool = None  # 實際按下掃描時才抓（見下方 run_btn）
+            else:
+                pool = watchlist or list(INDUSTRY_MAP.keys())
+                st.caption(f"目前共 {len(pool)} 檔（在「📈 個股分析」查看過的股票會自動加進來）")
 
-        st.markdown("---")
-        with st.expander("🎛️ 技術面自訂篩選（選填）"):
-            tech_filter = st.multiselect("候選股必須符合（多選＝全部都要成立）", list(TECH_FILTER_OPTIONS.keys()))
-            if tech_filter:
-                st.caption("只有同時符合以上所有條件的股票才會進入候選名單，條件越多、篩出的檔數通常越少。")
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        with fc1:
+            with st.expander("🎛️ 技術面篩選"):
+                tech_filter = st.multiselect("必須符合（多選＝全部成立）", list(TECH_FILTER_OPTIONS.keys()))
+                if tech_filter:
+                    st.caption("只有同時符合所有條件的股票才會入選，條件越多、檔數通常越少。")
+        with fc2:
+            with st.expander("🔎 基本面硬篩"):
+                use_filter = st.checkbox("啟用基本面篩選", value=False)
+                min_roe = st.slider("最低 ROE (%)", 0, 30, 15) if use_filter else None
+                max_dte = st.slider("最高負債權益比", 20, 300, 100) if use_filter else None
+                require_eps = st.checkbox("要求 EPS 為正", value=True) if use_filter else False
+                require_ocf = st.checkbox("要求營業現金流為正", value=True) if use_filter else False
+                require_fcf = st.checkbox("要求自由現金流為正", value=False) if use_filter else False
+                if use_filter:
+                    st.caption("資料缺失時預設不刷掉，避免 Yahoo 沒填欄位就被誤刪；請自行確認財報。")
+        with fc3:
+            with st.expander("🎯 風報比篩選"):
+                rr_choice = st.radio("只保留 RR 大於…", ["不限制", "1 : 1.5", "1 : 2", "1 : 3"], index=0)
+                min_rr = {"不限制": None, "1 : 1.5": 1.5, "1 : 2": 2.0, "1 : 3": 3.0}[rr_choice]
+                if min_rr:
+                    st.caption("RR ＝（第一停利－現價）÷（現價－近端停損）。避免選到停損空間太大、賺賠不對稱的標的。")
+        with fc4:
+            with st.expander("🏭 產業賽道"):
+                industry_filter = st.multiselect("只看這些產業（不選＝不限制）", sorted(set(TW_INDUSTRY_CODE.values())))
+                if industry_filter:
+                    st.caption("先選賽道、再挑個股——由下而上選股法的第一步。")
 
-        st.markdown("---")
-        with st.expander("🔎 基本面硬性篩選（選填）"):
-            use_filter = st.checkbox("啟用基本面篩選", value=False)
-            min_roe = st.slider("最低 ROE (%)", 0, 30, 15) if use_filter else None
-            max_dte = st.slider("最高負債權益比", 20, 300, 100) if use_filter else None
-            require_eps = st.checkbox("要求 EPS 為正（排除虧損股）", value=True) if use_filter else False
-            require_ocf = st.checkbox("要求營業現金流為正", value=True) if use_filter else False
-            require_fcf = st.checkbox("要求自由現金流為正", value=False) if use_filter else False
-            if use_filter:
-                st.caption("任何一項資料缺失時預設不刷掉，避免因為 Yahoo 沒填某欄位就被誤刪；請自行確認財報。")
-
-        st.markdown("---")
-        with st.expander("🎯 風險報酬比硬性篩選（選填）"):
-            rr_choice = st.radio("只保留 RR（風報比）大於…", ["不限制", "1 : 1.5", "1 : 2", "1 : 3"], index=0)
-            min_rr = {"不限制": None, "1 : 1.5": 1.5, "1 : 2": 2.0, "1 : 3": 3.0}[rr_choice]
-            if min_rr:
-                st.caption("RR ＝（第一停利－現價）÷（現價－近端停損）。避免選到會漲但停損空間太大、賺賠不對稱的標的。")
-
-        st.markdown("---")
-        with st.expander("🏭 產業賽道篩選（選填）"):
-            industry_filter = st.multiselect("只看這些產業（不選＝不限制）", sorted(set(TW_INDUSTRY_CODE.values())))
-            if industry_filter:
-                st.caption("先選賽道、再挑個股——由下而上選股法的第一步。")
-
-        top_n = st.slider("顯示前幾名", 3, 20, 5)
-        run_btn = st.button("🔍 開始掃描候選股", type="primary", **STRETCH)
+        rb1, rb2 = st.columns([3, 1])
+        top_n = rb1.slider("顯示前幾名", 3, 20, 5)
+        rb2.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        run_btn = rb2.button("🔍 開始掃描", type="primary", **STRETCH)
 
     if run_btn:
         if pool_choice.startswith("🚀"):
@@ -3412,20 +3440,23 @@ elif app_mode == "🗂 觀察清單掃描":
                 except Exception as e:
                     st.error(f"匯入失敗，請確認檔案格式：{e}")
 
-    with st.sidebar:
-        watchlist_tks = get_watchlist()
-        pool_options = list(dict.fromkeys(watchlist_tks + list(INDUSTRY_MAP.keys())))
-        pool_default = watchlist_tks if watchlist_tks else list(INDUSTRY_MAP.keys())
-        _directory_for_names, _ = get_directory()
+    watchlist_tks = get_watchlist()
+    pool_options = list(dict.fromkeys(watchlist_tks + list(INDUSTRY_MAP.keys())))
+    pool_default = watchlist_tks if watchlist_tks else list(INDUSTRY_MAP.keys())
+    _directory_for_names, _ = get_directory()
 
-        def _pool_label(k):
-            bare = k.split(".")[0]
-            nm = INDUSTRY_MAP.get(k, {}).get("name") or _directory_for_names.get(bare, {}).get("name")
-            return f"{nm}（{bare}）" if nm else bare
+    def _pool_label(k):
+        bare = k.split(".")[0]
+        nm = INDUSTRY_MAP.get(k, {}).get("name") or _directory_for_names.get(bare, {}).get("name")
+        return f"{nm}（{bare}）" if nm else bare
 
+    with st.container(border=True):
+        st.markdown("#### ⚙️ 掃描設定")
         picked = st.multiselect("觀察清單（自動記錄你在「個股分析」看過的股票）", pool_options, default=pool_default, format_func=_pool_label)
-        extra_raw = st.text_input("再加其他代號（逗號分隔）", placeholder="例如 2317, 2412")
-        scan_btn = st.button("開始掃描", type="primary", **STRETCH)
+        sc1, sc2 = st.columns([3, 1])
+        extra_raw = sc1.text_input("再加其他代號（逗號分隔）", placeholder="例如 2317, 2412")
+        sc2.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        scan_btn = sc2.button("開始掃描", type="primary", **STRETCH)
         st.caption(f"目前觀察清單共 {len(watchlist_tks)} 檔" + ("（尚未瀏覽過任何股票，先顯示預設常用股）" if not watchlist_tks else "。"))
 
     def interpret_signal(win_rate, sample_n):
@@ -3789,22 +3820,25 @@ elif app_mode == "📡 總經雷達":
 
 elif app_mode == "📈 個股分析":
     directory, live_ok = get_directory()
-    with st.sidebar:
-        query = st.text_input("🔍 搜尋股票", placeholder="打代號開頭（如 2）或公司名（如 台積）", key="stock_search_query",
-                              help="打數字會列出「代號開頭相同」的股票並顯示公司名；打中文則找名稱包含的公司。輸入後按 Enter。")
+    with st.container(border=True):
+        ss1, ss2, ss3 = st.columns([2, 2.4, 1])
+        query = ss1.text_input("🔍 搜尋股票", placeholder="打代號開頭（如 2）或公司名（如 台積）", key="stock_search_query",
+                               help="打數字會列出「代號開頭相同」的股票並顯示公司名；打中文則找名稱包含的公司。輸入後按 Enter。")
         options, total_hits = search_stocks(query, directory)
+        _hint = ""
         if query.strip() and not options:
             options = [query.strip().upper()]
-            st.caption("名單中找不到，將直接使用你輸入的代號。")
+            _hint = "名單中找不到，將直接使用你輸入的代號。"
         elif query.strip():
-            st.caption(f"找到 {total_hits} 檔" + (f"，只列出前 {len(options)} 檔，請多打幾個字縮小範圍" if total_hits > len(options) else ""))
-        code = st.selectbox("選擇股票", options, key="stock_select_code",
-                            format_func=lambda c: f"{directory[c]['name']}（{c}）" if c in directory else c)
-        if st.button("🔄 更新最新資料", **STRETCH):
+            _hint = f"找到 {total_hits} 檔" + (f"，只列出前 {len(options)} 檔，請多打幾個字縮小範圍" if total_hits > len(options) else "")
+        code = ss2.selectbox("選擇股票", options, key="stock_select_code",
+                             format_func=lambda c: f"{directory[c]['name']}（{c}）" if c in directory else c)
+        ss3.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        if ss3.button("🔄 更新資料", **STRETCH):
             st.cache_data.clear()
             st.session_state["_dir_failed_at"] = 0
-        st.caption(f"✅ 已載入完整上市櫃名單（{len(directory)} 檔）" if live_ok
-                   else "ℹ️ 目前使用內建常用名單（連不上證交所名單）。仍可直接輸入任何代號。")
+        st.caption((_hint + "　" if _hint else "") + (f"✅ 已載入完整上市櫃名單（{len(directory)} 檔）" if live_ok
+                   else "ℹ️ 目前使用內建常用名單（連不上證交所名單）。仍可直接輸入任何代號。"))
 
     entry = directory.get(code)
     raw_ticker = (code + entry["suffix"]) if entry else normalize_ticker(code)
