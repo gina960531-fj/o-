@@ -10,6 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+# 大戶籌碼資料層（wanglai_data.py 要和本檔放在同一個資料夾；缺少時只有「大戶籌碼」頁會顯示提示）
+try:
+    import wanglai_data as wl
+except Exception:
+    wl = None
+
 # 嘗試載入爬蟲套件
 try:
     import requests
@@ -558,7 +564,7 @@ if "_pending_app_mode" in st.session_state:
 # ==========================================
 HOME_MODE = "🏠 戰情室首頁"
 NAV_GROUPS = [
-    ("search",   "🔍 選股雷達", ["🔥 資金熱力圖", "⭐ 每日候選股", "🗂 觀察清單掃描"]),
+    ("search",   "🔍 選股雷達", ["🔥 資金熱力圖", "🐋 大戶籌碼", "⭐ 每日候選股", "🗂 觀察清單掃描"]),
     ("research", "📈 研究室",   ["📈 個股分析", "📡 總經雷達"]),
     ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🤖 模擬自動交易"]),
     ("academy",  "🎓 覆盤學院", ["📝 策略日誌", "📚 教學庫"]),
@@ -2460,6 +2466,328 @@ def draw_sector_treemap(q, sec, scale, show_stocks=True):
     fig.update_layout(height=600, margin=dict(l=4, r=4, t=4, b=4), paper_bgcolor="rgba(0,0,0,0)", font=dict(size=14))
     return fig
 
+# ==========================================
+# 🐋 大戶籌碼週報（資料層在 wanglai_data.py）
+# ==========================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def wl_fetch_daily(tickers, start, end):
+    """批次抓日收盤：回傳 DataFrame（index=日期、columns=ticker）；批次失敗或漏掉的退回逐檔，並自動試上市／上櫃兩種後綴。"""
+    tickers = list(tickers)
+    frames = {}
+    try:
+        raw = yf.download(tickers, start=start, end=end, group_by="ticker", progress=False, threads=True, auto_adjust=False)
+        if raw is not None and not raw.empty and isinstance(raw.columns, pd.MultiIndex):
+            for t in set(raw.columns.get_level_values(0)):
+                ser = raw[t]["Close"].dropna()
+                if len(ser):
+                    frames[t] = ser
+    except Exception:
+        pass
+    missing = [t for t in tickers if t not in frames]
+    if missing:
+        def one(t):
+            base = t.split(".")[0]
+            alts = [t] + ([base + ".TWO"] if t.endswith(".TW") else [base + ".TW"] if t.endswith(".TWO") else [])
+            for tt in alts:
+                try:
+                    h = yf.Ticker(tt).history(start=start, end=end)
+                    if h is not None and len(h):
+                        return t, h["Close"].dropna()
+                except Exception:
+                    pass
+            return t, None
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for t, ser in ex.map(one, missing):
+                if ser is not None and len(ser):
+                    frames[t] = ser
+    out = pd.DataFrame(frames)
+    if not out.empty:
+        idx = pd.to_datetime(out.index)
+        if getattr(idx, "tz", None) is not None:
+            idx = idx.tz_localize(None)
+        out.index = idx.normalize()
+        out = out[~out.index.duplicated(keep="last")].sort_index()
+    return out
+
+def wl_build_closes(codes, dates, directory):
+    """回傳 index=代號、欄位=日期(ISO) 的收盤價；某日休市就取之前最近一個收盤價。"""
+    codes = sorted(set(codes))
+    if not codes:
+        return pd.DataFrame(columns=dates)
+    tick = {c: c + directory.get(c, {}).get("suffix", ".TW") for c in codes}
+    start = (pd.Timestamp(min(dates)) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+    end = (pd.Timestamp(max(dates)) + pd.Timedelta(days=3)).strftime("%Y-%m-%d")
+    daily = wl_fetch_daily(tuple(sorted(tick.values())), start, end)
+    out = {}
+    for d in dates:
+        sub = daily.loc[:pd.Timestamp(d)] if not daily.empty else daily
+        out[d] = sub.ffill().iloc[-1] if len(sub) else pd.Series(dtype=float)
+    closes = pd.DataFrame(out)
+    closes.index = [str(t).split(".")[0] for t in closes.index]
+    return closes[~closes.index.duplicated(keep="last")]
+
+def wl_bench(dates):
+    daily = wl_fetch_daily(("^TWII",), (pd.Timestamp(min(dates)) - pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
+                           (pd.Timestamp(max(dates)) + pd.Timedelta(days=3)).strftime("%Y-%m-%d"))
+    if daily.empty:
+        return pd.Series(dtype=float)
+    ser = daily.iloc[:, 0]
+    return pd.Series({d: ser.loc[:pd.Timestamp(d)].iloc[-1] for d in dates if len(ser.loc[:pd.Timestamp(d)])})
+
+def _wl_colorize(view, pct_cols):
+    fmt = {c: "{:+.2f}" for c in pct_cols if c in view.columns}
+    for c, f in (("融資增減%", "{:+.1f}%"), ("券資比", "{:.1f}"), ("週股價%", "{:+.1f}%")):
+        if c in view.columns:
+            fmt[c] = f
+    sty = view.style.format(fmt, na_rep="—")
+    color = lambda v: ("color:#c0504d;font-weight:600" if v > 0 else "color:#3f8f66;font-weight:600" if v < 0 else "") if pd.notna(v) else ""
+    mapper = getattr(sty, "map", None) or sty.applymap
+    return mapper(color, subset=[c for c in list(fmt) if c != "券資比"])
+
+def _wl_view(d, directory, px):
+    v = pd.DataFrame({
+        "排名": range(1, len(d) + 1), "代號": d.index,
+        "名稱": [directory.get(c, {}).get("name", c) for c in d.index],
+        "產業": [directory.get(c, {}).get("ind", "") for c in d.index],
+        "大戶Δ": d["big_d"].values, "千張Δ": d["mega_d"].values, "散戶Δ": d["retail_d"].values,
+        "融資增減%": d["margin_chg"].values, "券資比": d["ratio"].values,
+        "週股價%": [px.get(c, np.nan) for c in d.index], "標籤": d["tags"].values})
+    return v
+
+def _wl_highlights(d, directory, px, increase=True):
+    nm = lambda c: f"{directory.get(c, {}).get('name', c)}（{c}）"
+    out = []
+    top = d.index[0]
+    r = d.iloc[0]
+    pxs = px.get(top, np.nan)
+    out.append(f"**{nm(top)}** 大戶 {r['big_d']:+.2f}pp、千張 {r['mega_d']:+.2f}、股東人數 {r['holders_d']:+,.0f} 人" +
+               (f"、本週股價 {pxs:+.1f}%" if pd.notna(pxs) else "") + (f"、融資 {r['margin_chg']:+.1f}%" if pd.notna(r["margin_chg"]) else "") + "。")
+    n = len(d)
+    k = int((d["holders_d"] < 0).sum() if increase else (d["holders_d"] > 0).sum())
+    out.append(f"前 {n} 名裡有 {k} 檔股東人數{'減少（籌碼集中）' if increase else '增加（籌碼分散）'}。")
+    streak_col = "streak_up" if increase else "streak_dn"
+    st3 = d[d[streak_col] >= 3]
+    if len(st3):
+        out.append(f"連{'買' if increase else '賣'} 3 週以上：" + "、".join(f"{nm(c)} {int(d.loc[c, streak_col])}週" for c in st3.index[:5]) + "。")
+    tg = "中大戶升格" if increase else "千張降級"
+    tl = d[d["tag_list"].apply(lambda t: tg in t)]
+    if len(tl):
+        out.append(f"{tg}：" + "、".join(nm(c) for c in tl.index[:6]) + f"（共 {len(tl)} 檔）。")
+    return out
+
+def render_wanglai_page():
+    st.title("🐋 大戶籌碼週報")
+    st.caption("用集保戶股權分散表追蹤「大戶」每週的持股比例變化，並觀察大戶買超的股票隔週表現。資料每週才更新一次。")
+    if wl is None:
+        st.error("找不到 wanglai_data.py。請把它和 quant_radar_app.py 放在同一個資料夾，再重新整理。")
+        return
+    directory, _ = get_directory()
+
+    # ---------- 資料來源與更新 ----------
+    with st.container(border=True):
+        c1, c2 = st.columns([1.4, 2.6])
+        src = c1.radio("資料來源", ["📊 真實資料（本機累積）", "🧪 示範資料（隨機產生）"], key="wl_src")
+        demo = src.startswith("🧪")
+        with c2:
+            if demo:
+                st.info("示範資料是**隨機產生**的，只用來預覽畫面長什麼樣子；股價和籌碼完全無關，所以示範的成績單不代表任何規律。")
+                if st.button("🧪 產生／重新產生示範資料", key="wl_make_demo"):
+                    codes = sorted(c for c in directory if re.fullmatch(r"[1-9]\d{3}", str(c)))
+                    wl.make_demo(codes, n_weeks=14)
+                    st.success("已產生 14 週示範資料。")
+            else:
+                if st.button("📥 更新集保資料（下載最新一週）", type="primary", key="wl_update"):
+                    with st.spinner("下載集保戶股權分散表中…（約 10～60 秒）"):
+                        res = wl.collect_latest()
+                    if res["ok"]:
+                        st.success(f"已儲存資料日期 {res['date']}（{res['n_stocks']} 檔個股）。")
+                    else:
+                        st.error("下載失敗，請看下方訊息；也可以改用「手動上傳」。")
+                    for m in res["messages"]:
+                        st.caption("• " + m)
+                with st.expander("📎 手動上傳集保 CSV（自動下載失敗時用）"):
+                    st.caption("用瀏覽器開 https://opendata.tdcc.com.tw/getOD.ashx?id=1-5 下載 CSV，再上傳到這裡。")
+                    up = st.file_uploader("選擇檔案", type=["csv"], key="wl_upload")
+                    if up is not None and st.button("匯入這個檔案", key="wl_import"):
+                        try:
+                            info = wl.ingest_tdcc_text(up.getvalue().decode("utf-8-sig", errors="replace"))
+                            st.success(f"已匯入資料日期 {info['date']}（{info['n_stocks']} 檔）。")
+                        except Exception as e:
+                            st.error(f"匯入失敗：{e}")
+
+    dates, snaps, margins = wl.load_all(demo)
+    if not dates:
+        st.info("還沒有任何資料。請按上面的按鈕下載（真實資料）或產生示範資料。集保每週只更新一次，累積 2 週就能看到第一份週增減報表。")
+        return
+
+    # ---------- 定義與設定 ----------
+    with st.expander("⚙️ 定義與顯示設定"):
+        s1, s2, s3 = st.columns(3)
+        big_label = s1.selectbox("大戶定義", ["400 張以上", "200 張以上"], key="wl_big")
+        retail_label = s2.selectbox("散戶定義", ["50 張以下", "10 張以下", "100 張以下"], key="wl_retail",
+                                    help="原報表沒有寫明散戶的定義，這裡先預設 50 張以下，可自行切換。")
+        top_n = s3.selectbox("榜單檔數", [25, 50], index=1, key="wl_topn")
+        st.caption("千張大戶＝持股 1000 張以上。大戶、千張、散戶的變動單位都是「百分點」（占集保庫存比例的變化）。")
+    cfg = {"big_from": 12 if big_label.startswith("400") else 11,
+           "retail_to": {"50 張以下": 8, "10 張以下": 3, "100 張以下": 9}[retail_label]}
+
+    if len(dates) < 2:
+        st.warning(f"目前只有 1 週資料（{dates[0]}）。再累積 1 週（下次集保更新後再下載一次）就能看到週增減。")
+        w = wl.layers(snaps[dates[0]], cfg).sort_values("big", ascending=False).head(30)
+        v = pd.DataFrame({"代號": w.index, "名稱": [directory.get(c, {}).get("name", c) for c in w.index],
+                          "大戶持股%": w["big"].round(2).values, "千張大戶%": w["mega"].round(2).values,
+                          "股東人數": w["holders"].values})
+        st.markdown("#### 目前大戶持股比例最高的 30 檔")
+        st.dataframe(v, hide_index=True, **STRETCH)
+        return
+
+    weeks = dates[1:]
+    sel = st.selectbox("查看哪一週", weeks[::-1], key="wl_week",
+                       format_func=lambda d: f"{d}（相對 {dates[dates.index(d) - 1]}）")
+    k = dates.index(sel)
+
+    if demo:
+        d_closes, d_bench = wl.load_demo_prices()
+    def get_closes(codes, ds):
+        try:
+            if demo:
+                return d_closes.reindex(list(codes))[ds]
+            return wl_build_closes(codes, ds, directory)
+        except Exception:
+            return pd.DataFrame(index=list(codes), columns=ds, dtype=float)
+    def week_px(codes):
+        cl = get_closes(codes, [dates[k - 1], dates[k]])
+        return ((cl[dates[k]] / cl[dates[k - 1]] - 1) * 100).to_dict()
+
+    wk = wl.build_week(dates, snaps, margins, k, cfg)
+    t_inc, t_dec, t_swap, t_score, t_info = st.tabs(["📈 週增 TOP", "📉 週減 TOP", "🔄 大戶換手", "🏆 成績單", "ℹ️ 說明與資料狀態"])
+
+    pct_cols = ["大戶Δ", "千張Δ", "散戶Δ"]
+    for tab, inc in ((t_inc, True), (t_dec, False)):
+        with tab:
+            d = wk.sort_values("big_d", ascending=not inc).head(top_n)
+            px = week_px(list(d.index))
+            st.markdown(f"#### 大戶{'增持' if inc else '減持'}前 {top_n} 名　<span style='color:#7b8794;font-size:0.85em'>{sel} vs {dates[k-1]}</span>", unsafe_allow_html=True)
+            st.dataframe(_wl_colorize(_wl_view(d, directory, px), pct_cols), hide_index=True, **STRETCH, height=min(38 * (len(d) + 1), 900))
+            st.caption("紅＝增、綠＝減。融資增減與券資比抓不到的欄位顯示「—」；週股價是兩份快照日期之間的收盤價漲跌。")
+            if len(d):
+                st.markdown("**重點**")
+                for line in _wl_highlights(d, directory, px, inc):
+                    st.markdown(f"- {line}")
+
+    with t_swap:
+        if k < 2:
+            st.info("大戶換手需要至少 3 週資料（要比較上週與本週的方向）。")
+        else:
+            groups = wl.exchange_groups(wk)
+            allc = [c for g in groups.values() for c in g.index]
+            px = week_px(allc)
+            st.markdown(f"#### 本週大戶變動 ≥1pp 的 {len(allc)} 檔 × 上週動向　<span style='color:#7b8794;font-size:0.85em'>{sel}</span>", unsafe_allow_html=True)
+            desc = {"續買": "上週增、本週再增", "回頭車": "上週減、本週回補", "下車": "上週增、本週減", "續賣": "上週減、本週再減"}
+            for name, g in groups.items():
+                r = pd.Series([px.get(c, np.nan) for c in g.index]).dropna()
+                head = f"**{name}　{len(g)} 檔**　<span style='color:#7b8794'>{desc[name]}</span>"
+                if len(r):
+                    head += f"　｜　本週漲跌 平均 {r.mean():+.1f}%　中位 {r.median():+.1f}%　上漲 {int((r > 0).sum())}/{len(r)}"
+                st.markdown(head, unsafe_allow_html=True)
+                if len(g):
+                    gv = pd.DataFrame({"名稱": [f"{directory.get(c, {}).get('name', c)}（{c}）" for c in g.index],
+                                       "上週Δ→本週Δ": [f"{a:+.2f} → {b:+.2f}" for a, b in zip(g["prev_big_d"], g["big_d"])],
+                                       "週股價%": [px.get(c, np.nan) for c in g.index]})
+                    st.dataframe(_wl_colorize(gv.sort_values("週股價%", ascending=False), []), hide_index=True, **STRETCH)
+            st.caption("大戶換手的「週股價」只是描述性統計，不代表大戶動向能預測股價。")
+
+    with t_score:
+        if len(dates) < 3:
+            st.info("成績單需要至少 3 週資料：用「上週的大戶增減名單」去看「下一週」的股價表現。目前資料不足。")
+        else:
+            hist_n = st.slider("回看幾週", 3, min(12, len(dates) - 2), min(11, len(dates) - 2), key="wl_hist") if len(dates) > 4 else len(dates) - 2
+            use = dates[-(hist_n + 2):]
+            cand = set()
+            for kk in range(1, len(use) - 1):
+                dd = wl.weekly_delta(snaps[use[kk]], snaps[use[kk - 1]], cfg)
+                cand |= set(dd.sort_values("big_d", ascending=False).head(50).index) | set(dd.sort_values("big_d").head(50).index)
+            with st.spinner(f"取得 {len(cand)} 檔股價中…" if not demo else "計算中…"):
+                if demo:
+                    closes, bench = d_closes, d_bench
+                else:
+                    closes, bench = wl_build_closes(cand, use, directory), wl_bench(use)
+            sc = wl.score_weeks(use, snaps, closes, bench, cfg)
+            if sc.empty:
+                st.warning("股價資料不足，算不出成績單（可能是抓不到股價）。")
+            else:
+                summ = wl.score_summary(sc)
+                last = sc.iloc[-1]
+                st.markdown(f"#### 最新一週：名單 {last['list_date']} → 報酬 {last['list_date']} 收盤至 {last['end_date']} 收盤")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("大戶買組（上週大戶增最多 50 檔）", f"{last['buy_avg']:+.2f}%", f"中位 {last['buy_med']:+.2f}%　{last['buy_up']}漲/{last['buy_dn']}跌", delta_color="off")
+                m2.metric("散戶買組（上週大戶減最多 50 檔）", f"{last['sell_avg']:+.2f}%", f"中位 {last['sell_med']:+.2f}%　{last['sell_up']}漲/{last['sell_dn']}跌", delta_color="off")
+                m3.metric("加權指數同期", f"{last['bench']:+.2f}%", f"買組跑贏 {last['buy_beat']} 檔、賣組 {last['sell_beat']} 檔", delta_color="off")
+
+                st.markdown(f"#### 歷史 {summ['weeks']} 週紀錄")
+                hv = pd.DataFrame({"週": [f"W{i + 1}" for i in range(len(sc))], "名單日": sc["list_date"], "報酬區間": sc["list_date"].str[5:] + " → " + sc["end_date"].str[5:],
+                                   "買組%": sc["buy_avg"], "賣組%": sc["sell_avg"], "加權%": sc["bench"], "結果": sc["result"]})
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=hv["週"], y=hv["買組%"], name="大戶買組", marker_color="#b08d57"))
+                fig.add_trace(go.Bar(x=hv["週"], y=hv["賣組%"], name="散戶買組", marker_color="#9aa5b4"))
+                fig.add_trace(go.Scatter(x=hv["週"], y=hv["加權%"], name="加權指數", mode="lines+markers", line=dict(color="#2f4064", dash="dot")))
+                fig.update_layout(barmode="group", height=320, template="plotly_white", margin=dict(l=10, r=10, t=10, b=10), yaxis_title="週報酬 %", legend=dict(orientation="h", y=-0.2))
+                st.plotly_chart(fig, **STRETCH, key="wl_score_chart")
+                st.dataframe(_wl_colorize(hv, ["買組%", "賣組%", "加權%"]).format({"買組%": "{:+.2f}", "賣組%": "{:+.2f}", "加權%": "{:+.2f}"}), hide_index=True, **STRETCH)
+
+                st.markdown("#### 合起來看")
+                st.markdown(
+                    f"- **直接比輸贏**：大戶買組 **{summ['win']} 勝 {summ['lose']} 敗 {summ['tie']} 平**（兩組平均報酬差距小於 0.1 個百分點算平）。\n"
+                    f"- **平均每週**：買組 {summ['buy_mean']:+.2f}%、賣組 {summ['sell_mean']:+.2f}%；**逐週複利累積**：買組 {summ['buy_cum']:+.1f}%、賣組 {summ['sell_cum']:+.1f}%、加權 {summ['bench_cum']:+.1f}%（不含手續費與稅）。\n"
+                    f"- **正報酬週數**：買組 {summ['buy_pos']}/{summ['weeks']}，賣組 {summ['sell_pos']}/{summ['weeks']}。")
+                if summ["weeks"] < 20:
+                    st.warning(f"⚠️ 只有 {summ['weeks']} 週資料，樣本很小：幾週的輸贏很容易只是運氣，不能當成「大戶跟單有效」的證據。累積越久越有參考價值。" +
+                               ("　**目前是隨機示範資料，本來就不該有任何規律。**" if demo else ""))
+
+                kk = len(use) - 2
+                wk2 = wl.build_week(use, snaps, margins, kk, cfg)
+                ret = last["buy_ret"]
+                f = wk2.reindex(ret.index)
+                rank = pd.Series(range(1, len(f.sort_values("big_d", ascending=False)) + 1), index=f.sort_values("big_d", ascending=False).index).reindex(ret.index)
+                conds = [("榜單前 10 名（vs 11–50 名）", rank <= 10, None),
+                         ("千張同步（千張Δ ≥ +1pp）", f["mega_d"] >= 1, None),
+                         ("中大戶升格", f["tag_list"].apply(lambda t: "中大戶升格" in t), None),
+                         ("連買 2 週以上（vs 只買 1 週）", f["streak_up"] >= 2, None),
+                         ("回頭車", f["tag_list"].apply(lambda t: "回頭車" in t), None),
+                         ("股東人數減少", f["holders_d"] < 0, None),
+                         ("融資增加（vs 減少或持平）", f["margin_chg"] > 0, f["margin_chg"].notna()),
+                         ("券資比 ≥ 10（vs < 10）", f["ratio"] >= 10, f["ratio"].notna())]
+                rows = []
+                for name, cond, valid in conds:
+                    rr = ret if valid is None else ret[valid.reindex(ret.index).fillna(False)]
+                    cc = cond.reindex(rr.index).fillna(False)
+                    ss = wl.split_stats(rr, cc)
+                    fmt_ = lambda x: f"{x['n']} 檔　{x['avg']:+.2f}%　{x['up']}漲/{x['dn']}跌" if x["n"] else "—"
+                    rows.append({"條件": name, "符合": fmt_(ss["符合"]), "不符合": fmt_(ss["不符合"])})
+                st.markdown(f"#### 本週把買組切開看　<span style='color:#7b8794;font-size:0.85em'>名單 {last['list_date']}</span>", unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame(rows), hide_index=True, **STRETCH)
+                st.caption("切開後每組只有幾檔到幾十檔，平均數很容易被少數幾檔拉動，只能當描述，不要拿來下結論。")
+
+    with t_info:
+        st.markdown("#### 已存資料")
+        sv = pd.DataFrame({"資料日期": dates, "個股檔數": [len(snaps[d]) for d in dates],
+                           "有融資融券資料": ["✅" if d in margins else "—" for d in dates]})
+        st.dataframe(sv.iloc[::-1], hide_index=True, **STRETCH)
+        st.caption(f"存放位置：{wl.data_dir(demo)}")
+        st.markdown(
+            "#### 名詞與規則\n"
+            "- **大戶**：持股 400 張以上；**千張大戶**：1000 張以上；**散戶**：預設 50 張以下（可在設定切換）。Δ 單位是「占集保庫存比例的百分點」。\n"
+            "- **千張降級**：千張大戶減少、但 400～999 張那一層增加（大戶往下掉一級）。**中大戶升格**：400～999 張層減少、千張大戶增加。\n"
+            "- **回頭車**：上週大戶減（≤-1pp）、本週增（≥+1pp）。**下車**：上週增、本週減。**連買／連賣 N**：連續 N 週大戶增（減）≥1pp。\n"
+            "- **融資增減**：融資餘額相對上一份快照的變化%；**券資比**＝融券餘額 ÷ 融資餘額 ×100。\n"
+            "- **成績單**：名單＝上週集保變動大戶增幅（減幅）前 50 檔；報酬＝名單日收盤到下一份快照日收盤，等權平均，不含交易成本。\n"
+            "#### 限制\n"
+            "- 集保資料每週才更新，而且是「持股分級」統計，**看不出誰在買**，也無法分辨是主力還是多個大戶同時動作。\n"
+            "- 大戶持股比例上升不等於會漲；成績單的週數少時，勝負多半是隨機波動。僅為公開籌碼統計，不構成投資建議。")
+        if demo and st.button("🗑️ 刪除示範資料", key="wl_del_demo"):
+            wl.clear_demo()
+            st.rerun()
+
 def resolve_display_name(tk, code_bare, info, directory=None):
     """
     強制優先順序：INDUSTRY_MAP 手打的中文名 > 全市場 directory（證交所/櫃買官方簡稱）> Yahoo 英文名 > 代號本身。
@@ -3395,6 +3723,9 @@ elif app_mode == "🔥 資金熱力圖":
                 "- **這不是真正的資金淨流入**：成交值是買賣雙方的總量，不能分辨買超或賣超；要看主力動向還要搭配法人買賣超。\n"
                 "- **只涵蓋成交量前 N 大**的個股，冷門股與小型股沒有納入；產業分類採證交所產業別，與市場慣用的題材分類（如 AI、CoWoS）不同。\n"
                 "- 資料來自 Yahoo Finance，可能有延遲，點方塊可放大該族群。")
+
+elif app_mode == "🐋 大戶籌碼":
+    render_wanglai_page()
 
 elif app_mode == "⭐ 每日候選股":
     st.title("⭐ 每日量化候選股")
