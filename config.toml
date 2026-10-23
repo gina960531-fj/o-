@@ -1,5 +1,4 @@
-# 放在 quant_radar_app.py 旁邊的 .streamlit/config.toml
-[theme]
+# 放在 quant_radar_app.py 旁邊的 .streamlit/config.toml[theme]
 base = "light"
 primaryColor = "#2b3a55"
 backgroundColor = "#e2e9f3"
