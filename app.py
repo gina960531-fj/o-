@@ -41,6 +41,10 @@ try:
     import premarket as pmk
 except Exception:
     pmk = None
+try:
+    import overnight_edge as oed
+except Exception:
+    oed = None
 
 # 嘗試載入爬蟲套件
 try:
@@ -3610,7 +3614,7 @@ def get_market_forecast(symbol="0050.TW"):
                 direction=direction, action=action, score=score, bucket=bucket, wr=wr, n=n,
                 stats=bt, first=s1, second=s2, labels=(l1, l2))
 
-def render_market_forecast(tone=0):
+def render_market_forecast(tone=0, show_nav=True):
     st.markdown("#### 🔮 明日大盤走勢預測（以 0050 為代理）")
     fc = get_market_forecast("0050.TW")
     if not fc:
@@ -3660,7 +3664,7 @@ def render_market_forecast(tone=0):
                 else:
                     st.caption("樣本不足")
     st.caption("⚠️ 這是規則式試算：機率是『過去同分數區間隔日上漲的比例』，不是對明天的保證；綜合研判只是把技術分數與隔夜總經方向（費半、VIX、匯率）放在一起看，不是預測模型。")
-    if st.button("📰 開盤前完整情報 → 盤前必讀", key="mf_go_premarket"):
+    if show_nav and st.button("📰 開盤前完整情報 → 盤前必讀", key="mf_go_premarket"):
         _jump("📰 盤前必讀")
 
 def render_portfolio_balance(rows, cash_on_hand, total_capital, total_mv, directory):
@@ -3753,6 +3757,74 @@ def _pm_fetch():
 
 PM_EVENTS_FILE = os.path.join(DATA_DIR, "premarket_events.txt")
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _oe_load_cached():
+    out = {}
+    for key, sym in (("tw", "0050.TW"), ("sox", "^SOX"), ("ndx", "^IXIC")):
+        try:
+            h = yf.Ticker(sym).history(period="2y")
+            out[key] = _norm_series(h["Close"]) if (h is not None and len(h) > 50) else None
+        except Exception:
+            out[key] = None
+    if out["tw"] is None or (out["sox"] is None and out["ndx"] is None):
+        raise RuntimeError("歷史資料不足")
+    return out
+
+def _oe_load():
+    try:
+        return _oe_load_cached()
+    except Exception:
+        return None
+
+def render_overnight_edge(quotes):
+    if oed is None:
+        st.info("找不到 overnight_edge.py，無法做隔夜統計。請把它和 app.py 放在同一個資料夾。")
+        return
+    data = _oe_load()
+    if not data:
+        st.info("歷史價格暫時抓不到，無法做隔夜統計。")
+        return
+    now = pd.Timestamp.now(tz="Asia/Taipei")
+    if now.weekday() < 5 and (now.hour * 100 + now.minute) < 1330:
+        st.caption("現在還沒收盤：下面的隔夜漲跌，對應的就是「今天」的台股走勢。")
+    else:
+        st.caption("⚠️ 台股已收盤或休市：美股要到今晚才收盤，下面是「已經影響過今天」的隔夜資料；要預測下一個交易日，請等美股收盤後再看。")
+    cols = st.columns(2)
+    for col, key, sym, label in ((cols[0], "sox", "^SOX", "費城半導體"), (cols[1], "ndx", "^IXIC", "那斯達克")):
+        with col:
+            st.markdown(f"**{label} → 隔天的 0050**")
+            ser, q = data.get(key), quotes.get(sym)
+            if ser is None or not q:
+                st.caption("資料不足")
+                continue
+            pairs = oed.build_pairs(data["tw"], ser)
+            e = oed.edge_for(q["chg_pct"], pairs)
+            if e["bucket"] is None:
+                st.caption("歷史樣本不足")
+                continue
+            st.metric(f"最近美股日 {label}", f"{q['chg_pct']:+.2f}%", e["bucket"], delta_color="off")
+            if e["n"]:
+                st.write(f"過去兩年同樣情況共 **{e['n']}** 次，0050 當天上漲 **{e['up_prob']:.0f}%**、平均漲跌 {e['mean_ret']:+.2f}%（所有日子的上漲基準是 {e['base_up']:.0f}%）。")
+            r, p = e["corr"], e["p"]
+            if e["verdict"] == "useful":
+                st.success(f"整體關聯在統計上站得住腳（相關係數 {r:.2f}，p={p:.3f}），可以當參考；但 r² 只有 {r * r * 100:.0f}%，解釋力有限。")
+            elif e["verdict"] == "weak":
+                st.info(f"整體關聯很弱（相關係數 {r:.2f}，p={p:.2f}）：過去兩年，這個隔夜漲跌對 0050 當天走勢沒有可靠的預測力，不要只靠它判斷。")
+            else:
+                st.caption("這個區間的歷史樣本太少（少於 20 次），數字不具統計意義。")
+            with st.expander("各區間歷史統計"):
+                bt = oed.bucket_table(pairs)
+                if not bt.empty:
+                    st.dataframe(bt.round(1), **STRETCH)
+    st.caption("做法：每個台股交易日，配上『嚴格早於當天的最近一個美股交易日』的漲跌，統計過去兩年的實際結果。這是描述歷史，不是預測保證；區間與樣本數越少越不可靠。")
+
+def render_tomorrow_forecast(summ, quotes):
+    st.markdown("#### 🔮 大盤走勢預測（以 0050 為代理）")
+    tone = 2 if summ["score"] >= 3 else (-2 if summ["score"] <= -3 else 0)
+    render_market_forecast(tone, show_nav=False)
+    st.markdown("##### 🌙 隔夜美股對 0050 的歷史預測力")
+    render_overnight_edge(quotes)
+
 def render_premarket_page():
     st.title("📰 盤前必讀")
     st.caption("開盤前 10 分鐘快速掌握全貌：隔夜美股與期貨、總經風險、新聞與昨日盤面熱點。全部是自動抓取＋規則整理，請點進原文確認重要消息。")
@@ -3776,11 +3848,7 @@ def render_premarket_page():
         st.caption("目前沒有達到門檻的明顯多空訊號。")
     if summ["missing"]:
         st.caption("抓不到的項目：" + "、".join(summ["missing"]))
-    fc = get_market_forecast("0050.TW")
-    if fc:
-        st.markdown(f"**0050 技術面**：{fc['direction']}（分數 {fc['score']}），歷史相似情境隔日上漲機率 "
-                    + (f"{fc['wr']:.0f}%（N={fc['n']}）" if fc['wr'] is not None else "樣本不足") + "。")
-    st.caption("這只是把幾項隔夜指標按規則加減分，不是預測；同分不代表開盤一定同方向。")
+    render_tomorrow_forecast(summ, quotes)
 
     st.markdown("#### 2️⃣ 隔夜行情一覽")
     rows = []
