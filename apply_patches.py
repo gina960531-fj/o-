@@ -11,7 +11,7 @@ import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(HERE, "quant_radar_app.py")
+APP = os.path.join(HERE, "app.py")
 WL = os.path.join(HERE, "wanglai_data.py")
 
 

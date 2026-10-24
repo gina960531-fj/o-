@@ -16,11 +16,31 @@ try:
 except Exception:
     wl = None
 
+# 大戶選股（wanglai_picks.py 要和本檔放在同一個資料夾；缺少時只有「大戶籌碼 → 大戶選股」分頁會顯示提示）
+try:
+    import wanglai_picks as wp
+except Exception:
+    wp = None
+
 # 策略沙盒引擎（sandbox_engine.py 要和本檔放在同一個資料夾；缺少時只有「模擬自動交易」頁會顯示提示）
 try:
     import sandbox_engine as sbe
 except Exception:
     sbe = None
+
+# 功能擴充模組（缺少時，只有對應的頁面／區塊會顯示提示）
+try:
+    import portfolio_balance as pbal
+except Exception:
+    pbal = None
+try:
+    import etf_data as etfd
+except Exception:
+    etfd = None
+try:
+    import premarket as pmk
+except Exception:
+    pmk = None
 
 # 嘗試載入爬蟲套件
 try:
@@ -38,6 +58,29 @@ def _st_version():
 
 # 新版 Streamlit 以 width="stretch" 取代 use_container_width；舊版維持原參數，兩者都能跑
 STRETCH = {"width": "stretch"} if _st_version() >= (1, 50) else {"use_container_width": True}
+
+
+class _NotCached(Exception):
+    pass
+
+def cache_if_ok(ttl, is_ok=lambda r: r is not None):
+    """只有成功才快取。st.cache_data 不會快取例外，所以失敗時丟例外、外層再接住回傳原值。
+    fn_name 當作參數傳入，讓不同函式的快取不會互相混在一起（注意：底線開頭的參數不會參與快取鍵，所以不能用 _fn_name）。"""
+    def deco(fn):
+        @st.cache_data(ttl=ttl, show_spinner=False)
+        def _inner(fn_name, *a, **k):
+            r = fn(*a, **k)
+            if not is_ok(r):
+                raise _NotCached(r)
+            return r
+        def _outer(*a, **k):
+            try:
+                return _inner(fn.__name__, *a, **k)
+            except _NotCached as e:
+                return e.args[0]
+        _outer.__name__ = fn.__name__
+        return _outer
+    return deco
 
 st.set_page_config(page_title="J喜金融｜量化投資戰情室", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -571,7 +614,7 @@ if "_pending_app_mode" in st.session_state:
 HOME_MODE = "🏠 戰情室首頁"
 NAV_GROUPS = [
     ("search",   "🔍 選股雷達", ["🔥 資金熱力圖", "🐋 大戶籌碼", "⭐ 每日候選股", "🗂 觀察清單掃描"]),
-    ("research", "📈 研究室",   ["📈 個股分析", "📡 總經雷達"]),
+    ("research", "📈 研究室",   ["📰 盤前必讀", "📈 個股分析", "📡 總經雷達", "📊 ETF 專區"]),
     ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🤖 模擬自動交易"]),
     ("academy",  "🎓 覆盤學院", ["📝 策略日誌", "📚 教學庫"]),
 ]
@@ -700,7 +743,7 @@ def load_stock_data(ticker_symbol):
         q_income = pd.DataFrame()
     return info, df, q_income
 
-@st.cache_data(ttl=900, show_spinner=False)
+@cache_if_ok(900, is_ok=lambda r: r[2] == "success")
 def get_taiwan_chips(stock_id):
     """回傳 (外資買賣超, 投信買賣超, 狀態)。狀態: success / disabled / failed"""
     if not HAS_SCRAPER:
@@ -778,7 +821,7 @@ def compute_indicators(df):
 
     tp = (df['High'] + df['Low'] + df['Close']) / 3
     sma_tp = tp.rolling(14, min_periods=1).mean()
-    mad_tp = tp.rolling(14, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean()).replace(0, np.nan)
+    mad_tp = tp.rolling(14, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
     df['CCI'] = ((tp - sma_tp) / (0.015 * mad_tp)).fillna(0)
 
     df['MACD'] = df['Close'].ewm(span=12).mean() - df['Close'].ewm(span=26).mean()
@@ -879,26 +922,84 @@ def predict_next_day(latest_data, prev_data, k_name, patterns, backtest_stats=No
 # ==========================================
 # ★ 回測引擎一：單日勝率統計 ★
 # ==========================================
+def vector_score(df):
+    """向量化版的 compute_score(patterns=None)：一次算出整段歷史的分數，結果與逐列版完全一致。"""
+    n = len(df)
+    h = df['Hist'].values.astype(float)
+    ph = np.roll(h, 1)
+    ph[0] = np.nan
+    s = np.zeros(n)
+    s += np.where(h > 0, np.where(ph <= 0, 35, np.where(h > ph, 25, 5)), 0)
+    s += np.where(h < 0, np.where(ph >= 0, -35, np.where(h < ph, -25, -5)), 0)
+    w = df['WPR'].values.astype(float)
+    s += np.where(w < -80, 20, 0) + np.where(w > -20, -20, 0)
+    o, hi, lo, c = (df[x].values.astype(float) for x in ('Open', 'High', 'Low', 'Close'))
+    tr = np.maximum(hi - lo, 0.001)
+    body = np.abs(c - o)
+    us, ls = hi - np.maximum(o, c), np.minimum(o, c) - lo
+    doji = body / tr < 0.05
+    up = ~doji & (c > o)
+    down = ~doji & ~(c > o)
+    hammer = (up | down) & (ls > body * 1.5)
+    s += np.where(up, 15, 0) + np.where(down, -15, 0) + np.where(hammer, 10, 0)
+    s += np.where(c > df['MA20'].values.astype(float), 10, -10)
+    return pd.Series(s, index=df.index)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_price_only(ticker_symbol):
+    """只抓日線（不抓 info 與財報），掃描時先用價量條件篩掉大部分股票，再對通過的才抓基本面。"""
+    try:
+        df = yf.Ticker(ticker_symbol).history(period="2y")
+        if df is not None and not df.empty:
+            df = df.dropna(subset=['Close', 'High', 'Low', 'Open', 'Volume'])
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_info_only(ticker_symbol):
+    try:
+        info = yf.Ticker(ticker_symbol).info
+        return info if isinstance(info, dict) else {}
+    except Exception:
+        return {}
+
+
+def _st_thread_pool(max_workers=6):
+    """執行緒池；盡量把 Streamlit 的執行環境帶進工作執行緒，避免快取函式在執行緒內報警告。"""
+    try:
+        import threading
+        from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+        ctx = get_script_run_ctx()
+
+        def _init():
+            if ctx is not None:
+                add_script_run_ctx(threading.current_thread(), ctx)
+        return ThreadPoolExecutor(max_workers=max_workers, initializer=_init)
+    except Exception:
+        return ThreadPoolExecutor(max_workers=max_workers)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def backtest_score_system(df):
     df = df.reset_index(drop=True)
-    records = []
-    for i in range(30, len(df) - 1):
-        latest = df.iloc[i]
-        prev = df.iloc[i - 1]
-        k_name = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
-        score = compute_score(latest, prev, k_name, patterns=None)
-        bucket = score_to_bucket(score)
-        next_close = df.iloc[i + 1]['Close']
-        today_close = latest['Close']
-        if today_close > 0:
-            next_return = (next_close - today_close) / today_close * 100
-            records.append({"score": score, "bucket": bucket, "next_return": next_return})
-
-    if not records:
+    n = len(df)
+    if n < 32:
         return pd.DataFrame()
-
-    rec_df = pd.DataFrame(records)
+    scores = vector_score(df).values
+    close = df['Close'].values.astype(float)
+    nxt = np.full(n, np.nan)
+    nxt[:-1] = (close[1:] - close[:-1]) / close[:-1] * 100
+    idx = np.arange(n)
+    valid = (idx >= 30) & (idx <= n - 2) & (close > 0) & np.isfinite(nxt)
+    if not valid.any():
+        return pd.DataFrame()
+    sc = scores[valid]
+    bucket = np.select([sc >= 40, sc >= 0, sc > -30],
+                       ["≥40 (強勢偏多)", "0~39 (溫和偏多)", "-29~-1 (中性偏弱)"], default="≤-30 (偏空)")
+    rec_df = pd.DataFrame({"bucket": bucket, "next_return": nxt[valid]})
     summary = rec_df.groupby("bucket").agg(
         樣本數=("next_return", "count"),
         平均隔日報酬=("next_return", "mean"),
@@ -906,8 +1007,7 @@ def backtest_score_system(df):
     )
     summary = summary.rename(columns={"平均隔日報酬": "平均隔日報酬(%)", "上漲機率": "上漲機率(%)"})
     order = ["≥40 (強勢偏多)", "0~39 (溫和偏多)", "-29~-1 (中性偏弱)", "≤-30 (偏空)"]
-    summary = summary.reindex([b for b in order if b in summary.index])
-    return summary
+    return summary.reindex([b for b in order if b in summary.index])
 
 def walk_forward_bucket_stats(df):
     """把回測期間切成前後兩半分開統計，檢查分數的鑑別力是否穩定，而非整段時間平均出來的假象。"""
@@ -927,53 +1027,62 @@ def walk_forward_bucket_stats(df):
 # 僅用於評估評分規則的相對優劣，非真實下單環境下的績效保證。
 # ==========================================
 @st.cache_data(ttl=900, show_spinner=False)
-def simulate_strategy(df, entry_score=40, exit_score=0, max_hold_days=10, stop_loss_pct=0.07, cost_bps=15):
+def simulate_strategy(df, entry_score=40, exit_score=0, max_hold_days=10, stop_loss_pct=0.07,
+                      cost_bps=15, entry_max=None):
+    """
+    訊號用當日收盤算出，隔日開盤成交（避免用同一根 K 棒的收盤價既算訊號又成交）。
+    停損：盤中最低價觸及即出場，成交價 = min(開盤, 停損價)，跳空時比停損價更差。
+    entry_max：進場分數上限（None＝不限），用來測「只在某個分數區間進場」。
+    分數用 vector_score 一次算完，不再逐列呼叫評分函式。
+    """
     dates = df.index
-    closes = df['Close'].values
+    opens, lows, closes = df['Open'].values, df['Low'].values, df['Close'].values
+    scores = vector_score(df).values
     n = len(df)
     equity = 1.0
     equity_curve = np.ones(n)
-    position = None
-    trades = []
+    position, pending, pending_reason, trades = None, None, None, []
     cost = cost_bps / 10000.0
 
+    def close_position(i, px, reason):
+        nonlocal equity, position
+        gross = (px - position['entry_price']) / position['entry_price']
+        net = (1 + gross) * (1 - cost) * (1 - cost) - 1
+        equity *= (1 + net)
+        trades.append({
+            "進場日": dates[position['entry_i']], "出場日": dates[i],
+            "進場價": round(position['entry_price'], 2), "出場價": round(px, 2),
+            "報酬率(%)": round(net * 100, 2), "出場原因": reason})
+        position = None
+
     for i in range(30, n):
-        latest = df.iloc[i]
-        prev = df.iloc[i - 1]
-        price = closes[i]
-        k_name_today = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
-        score_today = compute_score(latest, prev, k_name_today, patterns=None)
+        # 1) 先執行昨天收盤後決定的單，以今日開盤價成交
+        if pending == "enter" and position is None:
+            position = {"entry_i": i, "entry_price": opens[i]}
+        elif pending == "exit" and position is not None:
+            close_position(i, opens[i], pending_reason)
+        pending, pending_reason = None, None
 
+        # 2) 盤中停損
         if position is not None:
-            hold_days = i - position['entry_i']
             stop_price = position['entry_price'] * (1 - stop_loss_pct)
-            hit_stop = price <= stop_price
-            hit_time = hold_days >= max_hold_days
-            hit_signal = score_today < exit_score
-            if hit_stop or hit_time or hit_signal:
-                gross_ret = (price - position['entry_price']) / position['entry_price']
-                net_ret = (1 + gross_ret) * (1 - cost) * (1 - cost) - 1
-                equity *= (1 + net_ret)
-                trades.append({
-                    "進場日": dates[position['entry_i']], "出場日": dates[i],
-                    "進場價": round(position['entry_price'], 2), "出場價": round(price, 2),
-                    "報酬率(%)": round(net_ret * 100, 2),
-                    "出場原因": "停損" if hit_stop else ("到期(持有天數上限)" if hit_time else "訊號轉弱")
-                })
-                position = None
-        else:
-            if score_today >= entry_score:
-                position = {"entry_i": i, "entry_price": price}
+            if lows[i] <= stop_price:
+                close_position(i, min(opens[i], stop_price), "停損")
 
+        # 3) 收盤後用今日分數決定，留到明天開盤執行
+        score_today = scores[i]
         if position is not None:
-            unrealized = (price - position['entry_price']) / position['entry_price']
-            equity_curve[i] = equity * (1 + unrealized)
-        else:
-            equity_curve[i] = equity
+            if i - position['entry_i'] >= max_hold_days:
+                pending, pending_reason = "exit", "到期(持有天數上限)"
+            elif score_today < exit_score:
+                pending, pending_reason = "exit", "訊號轉弱"
+        elif score_today >= entry_score and (entry_max is None or score_today < entry_max):
+            pending = "enter"
+
+        equity_curve[i] = equity * (closes[i] / position['entry_price']) if position is not None else equity
 
     equity_series = pd.Series(equity_curve, index=dates).iloc[30:]
-    trades_df = pd.DataFrame(trades)
-    return trades_df, equity_series
+    return pd.DataFrame(trades), equity_series
 
 def compute_backtest_metrics(equity_series, trades_df):
     if equity_series is None or equity_series.empty:
@@ -2062,7 +2171,7 @@ def backtest_panel(df, stats):
 # ==========================================
 # ★ 功能2：台股宏觀總經與籌碼雷達 ★
 # ==========================================
-@st.cache_data(ttl=900, show_spinner=False)
+@cache_if_ok(900)
 def get_macro_series(symbol, period="1mo"):
     try:
         h = yf.Ticker(symbol).history(period=period)
@@ -2074,7 +2183,7 @@ def get_macro_series(symbol, period="1mo"):
     except Exception:
         return None
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@cache_if_ok(1800)
 def get_taifex_foreign_tx():
     """
     嘗試抓取台指期（臺股期貨）外資淨未平倉口數。
@@ -2111,7 +2220,7 @@ def get_taifex_foreign_tx():
 # ==========================================
 # ★ 功能2：每日量化候選股 —— 籌碼連買偵測、基本面評分、綜合排序 ★
 # ==========================================
-@st.cache_data(ttl=21600, show_spinner=False)
+@cache_if_ok(21600)
 def get_t86_by_date(date_str):
     """
     抓證交所「三大法人買賣超日報」（T86）單日全市場資料，回傳 {代號: (外資淨額, 投信淨額)}。
@@ -2164,7 +2273,7 @@ def _signed_streak(values_recent_first):
         count += 1
     return count * sign
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@cache_if_ok(21600, is_ok=lambda r: bool(r))
 def get_institutional_streaks(codes, days=5):
     """
     回傳 {代號: {"foreign": 有號連續天數 or None, "trust": 同上}}。
@@ -2282,7 +2391,8 @@ def chip_score_components(streak):
         else: parts.append((f"投信近 {abs(t)} 日賣超", -3))
     return parts
 
-BUCKET_ENTRY_SCORE = {"≥40 (強勢偏多)": 40, "0~39 (溫和偏多)": 0, "-29~-1 (中性偏弱)": -30, "≤-30 (偏空)": -60}
+BUCKET_RANGE = {"≥40 (強勢偏多)": (40, None), "0~39 (溫和偏多)": (0, 40),
+                "-29~-1 (中性偏弱)": (-29, 0), "≤-30 (偏空)": (-999, -29)}
 
 @st.cache_data(ttl=900, show_spinner=False)
 def compute_horizon_actuals(entry_time_str, df_j, horizons=(5, 10, 20)):
@@ -2308,12 +2418,14 @@ def compute_horizon_actuals(entry_time_str, df_j, horizons=(5, 10, 20)):
             out[h] = round((df_j['Close'].iloc[t] - price_then) / price_then * 100, 2)
     return out
 
-def historical_horizon_stats(df, entry_score, exit_score=0, max_hold_days=10, stop_loss_pct=0.08):
+def historical_horizon_stats(df, bucket, max_hold_days=10, stop_loss_pct=0.08):
     """
-    拿這檔股票過去的走勢，實際模擬『分數達到這個門檻就進場』的交易紀錄，
-    統計真正發生過的平均報酬與平均持有天數 —— 不是編出來的數字，是同一套回測引擎跑出來的結果。
+    拿這檔股票過去的走勢，模擬『分數落在這個區間就進場』的交易，
+    統計真正發生過的平均報酬與平均持有天數（隔日開盤成交版回測引擎的結果）。
     """
-    trades_df, _ = simulate_strategy(df, entry_score=entry_score, exit_score=exit_score,
+    lo, hi = BUCKET_RANGE.get(bucket, (0, None))
+    exit_score = 0 if lo >= 0 else -999     # 偏弱區間不套「分數<0就出場」，否則隔天就出場
+    trades_df, _ = simulate_strategy(df, entry_score=lo, exit_score=exit_score, entry_max=hi,
                                      max_hold_days=max_hold_days, stop_loss_pct=stop_loss_pct, cost_bps=15)
     if trades_df is None or trades_df.empty:
         return None
@@ -2325,7 +2437,7 @@ def historical_horizon_stats(df, entry_score, exit_score=0, max_hold_days=10, st
 # ------------------------------------------
 # C：全市場流動性篩選池（避免對近2000檔逐一呼叫API導致掃描超慢）
 # ------------------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)
+@cache_if_ok(3600)
 def get_market_volume_snapshot():
     """
     一次性抓上市當日全市場成交量（TWSE 每日收盤行情彙總），用來做流動性排序。
@@ -2581,6 +2693,114 @@ def _wl_highlights(d, directory, px, increase=True):
         out.append(f"{tg}：" + "、".join(nm(c) for c in tl.index[:6]) + f"（共 {len(tl)} 檔）。")
     return out
 
+def render_big_holder_picks(wk, directory, demo, week_label):
+    st.markdown(f"#### 🎯 大戶選股　<span style='color:#7b8794;font-size:0.85em'>{week_label} 這週的集保變動</span>", unsafe_allow_html=True)
+    st.caption("流程：先用集保週報挑出「大戶這週明顯增持」的股票並打籌碼分，再對前幾名用日線技術面做確認、算出停損停利與風報比。"
+               "兩個分數的權重是經驗設定，沒有經過統計驗證。")
+    if wp is None:
+        st.error("找不到 wanglai_picks.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
+        return
+    if demo:
+        st.warning("⚠️ 目前是隨機產生的示範籌碼資料，只能預覽畫面；技術面是真實股價，但兩者沒有關係，結果不具任何意義。")
+
+    c1, c2, c3, c4 = st.columns(4)
+    min_big = c1.slider("大戶週增至少（百分點）", 0.5, 5.0, 1.0, 0.5, key="pk_min_big")
+    pool_n = c2.slider("取籌碼分前幾名做技術確認", 10, 60, 30, 5, key="pk_pool")
+    need_ma = c3.checkbox("技術面要站上月線", value=False, key="pk_ma")
+    min_rr = c4.selectbox("風報比至少", [0.0, 1.0, 1.5, 2.0], format_func=lambda x: "不限" if x == 0 else f"1 : {x}", key="pk_rr")
+    run = st.button("🎯 開始選股", type="primary", key="pk_run")
+
+    if run:
+        chip = wp.chip_pick_score(wk, min_big_d=min_big)
+        if chip.empty:
+            st.session_state["pk_result"] = {"rows": [], "week": week_label, "n_chip": 0}
+        else:
+            top = chip.head(pool_n)
+
+            def _tech(code):
+                suf = directory.get(code, {}).get("suffix", ".TW")
+                df = None
+                for sfx in (suf, ".TWO" if suf == ".TW" else ".TW"):
+                    df = load_price_only(code + sfx)
+                    if df is not None and len(df) >= 40:
+                        break
+                else:
+                    return None
+                try:
+                    d = compute_indicators(df)
+                    latest, prev = d.iloc[-1], d.iloc[-2]
+                    k = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
+                    sc = compute_score(latest, prev, k, patterns=None)
+                    lv = compute_levels(d, latest, latest['Close'], sc)
+                    return dict(score=sc, price=float(latest['Close']), stop=lv['near_stop'], t1=lv['target1'],
+                                rr=lv['rr'], above_ma=bool(latest['Close'] > latest['MA20']))
+                except Exception:
+                    return None
+
+            with st.spinner(f"抓取 {len(top)} 檔股價並做技術確認中…"):
+                with _st_thread_pool(6) as ex:
+                    techs = list(ex.map(_tech, list(top.index)))
+            rows = []
+            for (code, r), t in zip(top.iterrows(), techs):
+                w = wk.loc[code]
+                comp = r["chip_score"] + (0.5 * t["score"] if t else 0)
+                rows.append(dict(code=code, name=directory.get(code, {}).get("name", code), ind=directory.get(code, {}).get("ind", ""),
+                                 big_d=w["big_d"], mega_d=w["mega_d"], holders_d=w["holders_d"], streak=int(w["streak_up"]),
+                                 chip=r["chip_score"], tech=t["score"] if t else None, comp=round(comp, 1),
+                                 price=t["price"] if t else None, stop=t["stop"] if t else None, t1=t["t1"] if t else None,
+                                 rr=t["rr"] if t else None, above_ma=t["above_ma"] if t else None,
+                                 tags=w["tags"], reasons=r["reasons"], risks=r["risks"]))
+            st.session_state["pk_result"] = {"rows": rows, "week": week_label, "n_chip": len(chip)}
+
+    res = st.session_state.get("pk_result")
+    if not res:
+        st.info("設好條件後按「開始選股」。")
+        return
+    rows = res["rows"]
+    if not rows:
+        st.info("這週沒有任何股票的大戶增幅達到你設的門檻，可以把「大戶週增至少」調低。")
+        return
+    if need_ma:
+        rows = [r for r in rows if r["above_ma"]]
+    if min_rr:
+        rows = [r for r in rows if r["rr"] is not None and r["rr"] >= min_rr]
+    sort_key = st.radio("排序", ["綜合分", "大戶籌碼分", "技術分"], horizontal=True, key="pk_sort")
+    kf = {"綜合分": lambda r: r["comp"], "大戶籌碼分": lambda r: r["chip"], "技術分": lambda r: r["tech"] if r["tech"] is not None else -999}[sort_key]
+    rows = sorted(rows, key=kf, reverse=True)
+    st.caption(f"{res['week']} 週：符合大戶增幅門檻 {res['n_chip']} 檔，取前幾名做技術確認，目前顯示 {len(rows)} 檔。"
+               "綜合分＝大戶籌碼分＋技術分×0.5；沒有技術資料的股票只計籌碼分。")
+    if not rows:
+        st.info("套用「站上月線／風報比」之後沒有股票符合，請放寬條件。")
+        return
+
+    view = pd.DataFrame([{"排名": i, "代號": r["code"], "名稱": r["name"], "產業": r["ind"],
+                          "大戶Δ(pp)": r["big_d"], "千張Δ(pp)": r["mega_d"], "股東人數Δ": r["holders_d"], "連買週數": r["streak"],
+                          "籌碼分": r["chip"], "技術分": r["tech"], "綜合分": r["comp"], "現價": r["price"],
+                          "近端停損": r["stop"], "第一停利": r["t1"], "風報比": r["rr"], "標籤": r["tags"]}
+                         for i, r in enumerate(rows, 1)])
+    st.dataframe(view.round(2), hide_index=True, **STRETCH)
+    st.download_button("⬇️ 匯出成 CSV", data=view.to_csv(index=False).encode("utf-8-sig"), file_name="big_holder_picks.csv", mime="text/csv", key="pk_dl")
+
+    st.markdown("#### 前 10 名的入選理由與風險")
+    for i, r in enumerate(rows[:10], 1):
+        with st.expander(f"#{i}　{r['name']}（{r['code']}）　綜合 {r['comp']}　籌碼 {r['chip']}　技術 {r['tech'] if r['tech'] is not None else '—'}"):
+            x1, x2 = st.columns(2)
+            with x1:
+                st.markdown("**✅ 籌碼面理由**")
+                for t in r["reasons"]:
+                    st.markdown(f"- {t}")
+            with x2:
+                st.markdown("**⚠️ 籌碼面風險**")
+                for t in (r["risks"] or ["—"]):
+                    st.markdown(f"- {t}")
+            if r["price"] is not None:
+                st.caption(f"現價 {r['price']:.2f}　·　近端停損 {r['stop']:.2f}　·　第一停利 {r['t1']:.2f}　·　風報比 " +
+                           (f"1 : {r['rr']:.1f}" if r["rr"] is not None else "—") + "　·　" + ("站上月線" if r["above_ma"] else "在月線之下"))
+    st.warning("⚠️ 大戶持股比例增加不等於會漲：集保資料每週才更新、看不出是誰在買，而且公布時已經是過去式。"
+               "請先到「🏆 成績單」分頁看這套籌碼訊號在歷史上到底有沒有贏過大盤與賣組；成績單週數很少時，勝負多半是運氣。"
+               "本頁是整理資訊的工具，不構成投資建議。")
+
+
 def render_wanglai_page():
     st.title("🐋 大戶籌碼週報")
     st.caption("用集保戶股權分散表追蹤「大戶」每週的持股比例變化，並觀察大戶買超的股票隔週表現。資料每週才更新一次。")
@@ -2666,7 +2886,7 @@ def render_wanglai_page():
         return ((cl[dates[k]] / cl[dates[k - 1]] - 1) * 100).to_dict()
 
     wk = wl.build_week(dates, snaps, margins, k, cfg)
-    t_inc, t_dec, t_swap, t_score, t_info = st.tabs(["📈 週增 TOP", "📉 週減 TOP", "🔄 大戶換手", "🏆 成績單", "ℹ️ 說明與資料狀態"])
+    t_inc, t_dec, t_swap, t_score, t_pick, t_info = st.tabs(["📈 週增 TOP", "📉 週減 TOP", "🔄 大戶換手", "🏆 成績單", "🎯 大戶選股", "ℹ️ 說明與資料狀態"])
 
     pct_cols = ["大戶Δ", "千張Δ", "散戶Δ"]
     for tab, inc in ((t_inc, True), (t_dec, False)):
@@ -2713,25 +2933,35 @@ def render_wanglai_page():
             for kk in range(1, len(use) - 1):
                 dd = wl.weekly_delta(snaps[use[kk]], snaps[use[kk - 1]], cfg)
                 cand |= set(dd.sort_values("big_d", ascending=False).head(50).index) | set(dd.sort_values("big_d").head(50).index)
+            WL_LAG_DAYS = 3   # 假設：週五快照 → 下週一收盤才拿得到名單。可自行調整
+            pdates = None
+            if not demo:
+                today = pd.Timestamp.now().normalize()
+                pdates = {d: (pd.Timestamp(d) + pd.Timedelta(days=WL_LAG_DAYS)).strftime("%Y-%m-%d")
+                          for d in use if pd.Timestamp(d) + pd.Timedelta(days=WL_LAG_DAYS) <= today}
             with st.spinner(f"取得 {len(cand)} 檔股價中…" if not demo else "計算中…"):
                 if demo:
                     closes, bench = d_closes, d_bench
                 else:
-                    closes, bench = wl_build_closes(cand, use, directory), wl_bench(use)
-            sc = wl.score_weeks(use, snaps, closes, bench, cfg)
+                    pl = sorted(pdates.values())
+                    if pl:
+                        closes, bench = wl_build_closes(cand, pl, directory), wl_bench(pl)
+                    else:
+                        closes, bench = pd.DataFrame(), pd.Series(dtype=float)
+            sc = wl.score_weeks(use, snaps, closes, bench, cfg, price_dates=pdates)
             if sc.empty:
                 st.warning("股價資料不足，算不出成績單（可能是抓不到股價）。")
             else:
                 summ = wl.score_summary(sc)
                 last = sc.iloc[-1]
-                st.markdown(f"#### 最新一週：名單 {last['list_date']} → 報酬 {last['list_date']} 收盤至 {last['end_date']} 收盤")
+                st.markdown(f"#### 最新一週：名單 {last['list_date']} → 報酬 {last['entry_date']} 收盤至 {last['end_date']} 收盤")
                 m1, m2, m3 = st.columns(3)
                 m1.metric("大戶買組（上週大戶增最多 50 檔）", f"{last['buy_avg']:+.2f}%", f"中位 {last['buy_med']:+.2f}%　{last['buy_up']}漲/{last['buy_dn']}跌", delta_color="off")
                 m2.metric("散戶買組（上週大戶減最多 50 檔）", f"{last['sell_avg']:+.2f}%", f"中位 {last['sell_med']:+.2f}%　{last['sell_up']}漲/{last['sell_dn']}跌", delta_color="off")
                 m3.metric("加權指數同期", f"{last['bench']:+.2f}%", f"買組跑贏 {last['buy_beat']} 檔、賣組 {last['sell_beat']} 檔", delta_color="off")
 
                 st.markdown(f"#### 歷史 {summ['weeks']} 週紀錄")
-                hv = pd.DataFrame({"週": [f"W{i + 1}" for i in range(len(sc))], "名單日": sc["list_date"], "報酬區間": sc["list_date"].str[5:] + " → " + sc["end_date"].str[5:],
+                hv = pd.DataFrame({"週": [f"W{i + 1}" for i in range(len(sc))], "名單日": sc["list_date"], "報酬區間": sc["entry_date"].str[5:] + " → " + sc["end_date"].str[5:],
                                    "買組%": sc["buy_avg"], "賣組%": sc["sell_avg"], "加權%": sc["bench"], "結果": sc["result"]})
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=hv["週"], y=hv["買組%"], name="大戶買組", marker_color="#b08d57"))
@@ -2774,6 +3004,9 @@ def render_wanglai_page():
                 st.dataframe(pd.DataFrame(rows), hide_index=True, **STRETCH)
                 st.caption("切開後每組只有幾檔到幾十檔，平均數很容易被少數幾檔拉動，只能當描述，不要拿來下結論。")
 
+    with t_pick:
+        render_big_holder_picks(wk, directory, demo, sel)
+
     with t_info:
         st.markdown("#### 已存資料")
         sv = pd.DataFrame({"資料日期": dates, "個股檔數": [len(snaps[d]) for d in dates],
@@ -2786,7 +3019,7 @@ def render_wanglai_page():
             "- **千張降級**：千張大戶減少、但 400～999 張那一層增加（大戶往下掉一級）。**中大戶升格**：400～999 張層減少、千張大戶增加。\n"
             "- **回頭車**：上週大戶減（≤-1pp）、本週增（≥+1pp）。**下車**：上週增、本週減。**連買／連賣 N**：連續 N 週大戶增（減）≥1pp。\n"
             "- **融資增減**：融資餘額相對上一份快照的變化%；**券資比**＝融券餘額 ÷ 融資餘額 ×100。\n"
-            "- **成績單**：名單＝上週集保變動大戶增幅（減幅）前 50 檔；報酬＝名單日收盤到下一份快照日收盤，等權平均，不含交易成本。\n"
+            "- **成績單**：名單＝上週集保變動大戶增幅（減幅）前 50 檔；報酬＝名單公布後第一個交易日收盤，到下一週同一天收盤，等權平均，不含交易成本。\n"
             "#### 限制\n"
             "- 集保資料每週才更新，而且是「持股分級」統計，**看不出誰在買**，也無法分辨是主力還是多個大戶同時動作。\n"
             "- 大戶持股比例上升不等於會漲；成績單的週數少時，勝負多半是隨機波動。僅為公開籌碼統計，不構成投資建議。")
@@ -3150,39 +3383,50 @@ def passes_tech_filter(latest, prev, selected):
 
 def scan_candidates(tickers, streak_map, fund_filter=None, q_income_cache=None, directory=None, tech_filter=None,
                     min_rr=None, industry_filter=None):
+    """
+    平行掃描。先只抓日線，用技術條件與風報比篩掉大部分股票；
+    通過的才額外抓 info（基本面），所以多數股票不用等最慢的 info 請求。
+    各篩選條件彼此是「且」的關係，先後順序不影響結果。
+    """
     fund_filter = fund_filter or {}
-    rows = []
-    for tk in tickers:
-        try:
-            code_bare0 = tk.split(".")[0]
-            if industry_filter:
-                ind = (directory or {}).get(code_bare0, {}).get("ind")
-                if ind not in industry_filter:
-                    continue
+    streak_map = streak_map or {}
 
-            info, df, q_income = load_stock_data(tk)
+    def _one(tk):
+        try:
+            code_bare = tk.split(".")[0]
+            if industry_filter:
+                ind = (directory or {}).get(code_bare, {}).get("ind")
+                if ind not in industry_filter:
+                    return None
+
+            df = load_price_only(tk)
             if df is None or df.empty or len(df) < 40:
-                continue
-            if fund_filter and not passes_fundamental_filter(info, q_income, **fund_filter):
-                continue
+                return None
 
             df_ind = compute_indicators(df)
             latest, prev = df_ind.iloc[-1], df_ind.iloc[-2]
             if not passes_tech_filter(latest, prev, tech_filter):
-                continue
+                return None
             k_name = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
             tech_comps = score_components(latest, prev, k_name, patterns=None)
             tech_score = sum(p for _, p in tech_comps)
             bucket = score_to_bucket(tech_score)
+
+            lv = compute_levels(df_ind, latest, latest['Close'], tech_score)
+            if min_rr is not None and (lv['rr'] is None or lv['rr'] < min_rr):
+                return None
+
             bt = backtest_score_system(df_ind)
             wr = n = None
             if bt is not None and not bt.empty and bucket in bt.index:
                 wr, n = bt.loc[bucket, '上漲機率(%)'], int(bt.loc[bucket, '樣本數'])
 
+            info = load_info_only(tk)
+            if fund_filter and not passes_fundamental_filter(info, None, **fund_filter):
+                return None
             fund_comps = fundamental_score_components(info)
             fund_score = sum(p for _, p in fund_comps)
 
-            code_bare = tk.split(".")[0]
             streak = streak_map.get(code_bare, {})
             has_chip_data = bool(streak) and (streak.get("foreign") is not None)
             chip_comps = chip_score_components(streak) if has_chip_data else []
@@ -3203,21 +3447,23 @@ def scan_candidates(tickers, streak_map, fund_filter=None, q_income_cache=None, 
             if not has_chip_data:
                 risks.append("籌碼資料（連續買賣超）暫時抓不到，此項未計入評分")
 
-            # ---- D：具體交易計畫（進場時機、停損停利、預期報酬與天數） ----
             direction, action, buy_price, _r, color, _s, _b = predict_next_day(latest, prev, k_name, [], bt)
-            lv = compute_levels(df_ind, latest, latest['Close'], tech_score)
-            if min_rr is not None and (lv['rr'] is None or lv['rr'] < min_rr):
-                continue
-            horizon = historical_horizon_stats(df_ind, BUCKET_ENTRY_SCORE.get(bucket, 0))
+            horizon = historical_horizon_stats(df_ind, bucket)
 
-            rows.append(dict(ticker=tk, code=code_bare, name=name, price=latest['Close'],
-                             composite=composite, tech=tech_score, fund=fund_score, chip=chip_sc,
-                             wr=wr, n=n, reasons=reasons, risks=risks, has_chip_data=has_chip_data,
-                             direction=direction, entry_action=action, buy_price=buy_price,
-                             stop=lv['near_stop'], target1=lv['target1'], target2=lv['target2'], rr=lv['rr'],
-                             horizon=horizon))
+            return dict(ticker=tk, code=code_bare, name=name, price=latest['Close'],
+                        composite=composite, tech=tech_score, fund=fund_score, chip=chip_sc,
+                        wr=wr, n=n, reasons=reasons, risks=risks, has_chip_data=has_chip_data,
+                        direction=direction, entry_action=action, buy_price=buy_price,
+                        stop=lv['near_stop'], target1=lv['target1'], target2=lv['target2'], rr=lv['rr'],
+                        horizon=horizon)
         except Exception:
-            continue
+            return None
+
+    tickers = list(tickers)
+    if not tickers:
+        return []
+    with _st_thread_pool(6) as ex:
+        rows = [r for r in ex.map(_one, tickers) if r]
     return sorted(rows, key=lambda r: r['composite'], reverse=True)
 
 
@@ -3261,7 +3507,7 @@ NEWS_CATEGORY_KEYWORDS = {
 NEWS_POSITIVE_WORDS = ["大漲", "創新高", "增產", "利多", "亮眼", "上調", "買超", "看好", "強勁", "成長", "受惠"]
 NEWS_NEGATIVE_WORDS = ["大跌", "重挫", "下修", "利空", "示警", "違約", "裁員", "衰退", "賣超", "看淡", "崩跌", "熄火"]
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@cache_if_ok(1800)
 def get_news_items(max_items=20):
     if not HAS_SCRAPER:
         return None
@@ -3331,6 +3577,511 @@ def _macro_call(fx, vix, tx):
 # ==========================================
 # 模式二：📚 教學庫
 # ==========================================
+# ==========================================
+# 功能擴充：明日大盤走勢預測／資金平衡推薦／ETF 專區／盤前必讀
+# ==========================================
+def _new_pool(n=6):
+    fn = globals().get("_st_thread_pool")
+    return fn(n) if fn else ThreadPoolExecutor(max_workers=n)
+
+def _jump(mode):
+    st.session_state["_pending_app_mode"] = mode
+    st.rerun()
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_market_forecast(symbol="0050.TW"):
+    """大盤隔日預測：個股用的同一套評分與回測，套用在 0050（大盤代理）上，並附上分期檢驗。"""
+    info, df, _ = load_stock_data(symbol)
+    if df is None or df.empty or len(df) < 40:
+        return None
+    d = compute_indicators(df)
+    latest, prev = d.iloc[-1], d.iloc[-2]
+    k_name = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
+    pattern_msgs, _ = detect_advanced_patterns(d.tail(150))
+    bt = backtest_score_system(d)
+    direction, action, buy_price, _r, color, score, bucket = predict_next_day(latest, prev, k_name, pattern_msgs, bt)
+    wr = n = None
+    if bt is not None and not bt.empty and bucket in bt.index:
+        wr, n = float(bt.loc[bucket, '上漲機率(%)']), int(bt.loc[bucket, '樣本數'])
+    s1, s2, l1, l2 = walk_forward_bucket_stats(d)
+    prev_close = float(prev['Close'])
+    return dict(symbol=symbol, asof=str(d.index[-1].date()), price=float(latest['Close']),
+                chg_pct=(float(latest['Close']) / prev_close - 1) * 100 if prev_close else 0.0,
+                direction=direction, action=action, score=score, bucket=bucket, wr=wr, n=n,
+                stats=bt, first=s1, second=s2, labels=(l1, l2))
+
+def render_market_forecast(tone=0):
+    st.markdown("#### 🔮 明日大盤走勢預測（以 0050 為代理）")
+    fc = get_market_forecast("0050.TW")
+    if not fc:
+        st.info("大盤預測資料暫時抓不到。")
+        return
+    score, wr, n = fc["score"], fc["wr"], fc["n"]
+    tech = 1 if score >= 40 else (-1 if score <= -30 else 0)
+    macro = 1 if tone >= 2 else (-1 if tone <= -2 else 0)
+    if tech > 0 and macro > 0:
+        call, lvl = "多方共振", "green"
+    elif tech < 0 and macro < 0:
+        call, lvl = "空方共振", "red"
+    elif tech * macro == -1:
+        call, lvl = "訊號分歧", "yellow"
+    elif tech > 0 or macro > 0:
+        call, lvl = "偏多（單一訊號）", "green"
+    elif tech < 0 or macro < 0:
+        call, lvl = "偏空（單一訊號）", "red"
+    else:
+        call, lvl = "中性", "gray"
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("0050 技術面", fc["direction"], f"分數 {score}", delta_color="off")
+    c2.metric("隔日上漲機率", f"{wr:.1f}%" if wr is not None else "—", f"下跌機率 {100 - wr:.1f}%" if wr is not None else None, delta_color="off")
+    c3.metric("歷史相似樣本", f"N = {n}" if n else "—", help="過去 0050 分數落在同一區間的交易日數")
+    with c4:
+        st.markdown("**綜合研判**（技術面＋隔夜總經）")
+        st.markdown(pill(call, lvl), unsafe_allow_html=True)
+    st.caption(f"資料日期 {fc['asof']}　·　0050 收 {fc['price']:.2f}（{fc['chg_pct']:+.2f}%）　·　信心：{confidence_label(n)}")
+    verdict = discrimination_verdict(fc["stats"])
+    if verdict:
+        {"warning": st.warning, "info": st.info, "success": st.success}[verdict[0]](verdict[1])
+    with st.expander("看歷史統計與前後半段是否一致"):
+        if fc["stats"] is not None and not fc["stats"].empty:
+            s = fc["stats"].copy()
+            s['平均隔日報酬(%)'] = s['平均隔日報酬(%)'].round(2)
+            s['上漲機率(%)'] = s['上漲機率(%)'].round(1)
+            st.dataframe(s, **STRETCH)
+        cc1, cc2 = st.columns(2)
+        for col, s_, lab in ((cc1, fc["first"], fc["labels"][0]), (cc2, fc["second"], fc["labels"][1])):
+            with col:
+                st.markdown(f"**{lab}**")
+                if s_ is not None and not s_.empty:
+                    x = s_.copy()
+                    x['平均隔日報酬(%)'] = x['平均隔日報酬(%)'].round(2)
+                    x['上漲機率(%)'] = x['上漲機率(%)'].round(1)
+                    st.dataframe(x, **STRETCH)
+                else:
+                    st.caption("樣本不足")
+    st.caption("⚠️ 這是規則式試算：機率是『過去同分數區間隔日上漲的比例』，不是對明天的保證；綜合研判只是把技術分數與隔夜總經方向（費半、VIX、匯率）放在一起看，不是預測模型。")
+    if st.button("📰 開盤前完整情報 → 盤前必讀", key="mf_go_premarket"):
+        _jump("📰 盤前必讀")
+
+def render_portfolio_balance(rows, cash_on_hand, total_capital, total_mv, directory):
+    st.markdown("#### ⚖️ 資金平衡與明日買進推薦")
+    if pbal is None:
+        st.error("找不到 portfolio_balance.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
+        return
+    st.caption("先診斷目前的產業集中度、風格與現金水位，再從「每日候選股」的評分結果挑出能平衡部位的標的。門檻都可以調整，推薦只是規則式試算。")
+    with st.container(border=True):
+        a1, a2, a3, a4 = st.columns(4)
+        max_ind = a1.slider("單一產業上限 %", 20, 80, 40, 5, key="pb_max_ind")
+        max_single = a2.slider("新買單檔上限 %（占總資金）", 5, 40, 15, 5, key="pb_max_single")
+        risk_pct = a3.slider("單筆風險 %（占總資金）", 0.5, 3.0, 1.0, 0.5, key="pb_risk")
+        base_cash = a4.slider("目標現金水位 %", 0, 50, 15, 5, key="pb_cash")
+        b1, b2, b3 = st.columns([1.4, 1.6, 1.4])
+        style_pref = b1.radio("配置偏好", ["平衡", "偏防禦", "偏動能"], horizontal=True, key="pb_style")
+        pool_choice = b2.radio("候選池", ["🕒 自動觀察清單", "🚀 全市場流動性池"], horizontal=True, key="pb_pool")
+        pool_size = b3.slider("流動性池大小", 30, 200, 80, 10, key="pb_pool_size") if pool_choice.startswith("🚀") else None
+
+    flags = get_macro_risk_flags()
+    tgt_cash = pbal.target_cash_pct(base_cash, flags)
+    diag, issues = pbal.snapshot(rows, cash_on_hand, total_capital, max_industry_pct=max_ind, max_single_pct=40.0, target_cash_pct=tgt_cash)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("現金水位", f"{diag['cash_pct']:.0f}%" if cash_on_hand > 0 else "未填", f"目標 {tgt_cash:.0f}%", delta_color="off")
+    k2.metric("最大產業", f"{diag['top_ind']} {diag['ind_pct'][diag['top_ind']]:.0f}%" if diag['top_ind'] else "—")
+    sp = diag["style_pct"]
+    k3.metric("防禦／分散型", f"{sp.get('防禦型', 0) + sp.get('分散型', 0):.0f}%")
+    k4.metric("動能型", f"{sp.get('動能型', 0):.0f}%")
+    if flags:
+        st.warning("📡 總經雷達目前有風險訊號（" + "、".join(flags) + f"），目標現金水位已自動上調到 {tgt_cash:.0f}%。")
+    if cash_on_hand <= 0:
+        st.info("你還沒在上方「現金水位設定」填入可用現金，現金水位與可動用資金無法計算；也可以直接在下面輸入本次可動用資金。")
+    for lvl, txt in issues:
+        {"error": st.error, "warning": st.warning, "info": st.info}[lvl](txt)
+    for t in pbal.trim_suggestions(rows, total_capital, max_ind):
+        st.markdown(f"- **減碼參考**：「{t['industry']}」{t['pct']:.0f}% → 降到 {max_ind}% 約需減碼 ${t['trim_amt']:,.0f}，可優先檢視 {t['biggest']}。")
+
+    capital_base = total_capital if total_capital > 0 else total_mv
+    default_deploy = max(0.0, cash_on_hand - tgt_cash / 100.0 * capital_base) if cash_on_hand > 0 else 0.0
+    deploy = st.number_input("本次可動用資金（TWD）", min_value=0, value=int(default_deploy), step=10000, key=f"pb_deploy_{int(default_deploy)}",
+                             help="預設＝現金扣掉目標現金水位後的餘額，可自行修改。")
+    if st.button("🎯 產生明日買進建議", type="primary", key="pb_run"):
+        if deploy <= 0:
+            st.session_state["pb_cands"] = None
+            st.warning("可動用資金是 0，不產生建議。")
+        else:
+            pool = get_watchlist() or list(INDUSTRY_MAP.keys())
+            if pool_choice.startswith("🚀"):
+                pool, ok = build_smart_pool(directory, size=pool_size)
+                if not ok:
+                    st.warning("全市場成交量排行抓不到，已改用內建常用清單。")
+            with st.spinner(f"掃描 {len(pool)} 檔候選股中…"):
+                streak_map = get_institutional_streaks([t.split(".")[0] for t in pool], days=5) or {}
+                cands = scan_candidates(pool, streak_map, directory=directory)
+            st.session_state["pb_cands"] = dict(cands=cands, n_pool=len(pool))
+
+    res = st.session_state.get("pb_cands")
+    if res:
+        recs, left = pbal.recommend(rows, res["cands"], directory, deploy, capital_base, max_industry_pct=max_ind,
+                                    max_single_pct=max_single, risk_pct=risk_pct, n=5, style_pref=style_pref)
+        st.caption(f"候選池 {res['n_pool']} 檔，成功分析 {len(res['cands'])} 檔；已排除已持有、風報比不足、會讓產業超過上限的標的。")
+        if recs.empty:
+            st.info("沒有符合條件的建議：可能是候選都已持有、產業已達上限、風報比不足，或可動用資金太少。可以放寬上限或換候選池。")
+        else:
+            view = pd.DataFrame({"代號": recs["code"], "名稱": recs["name"], "產業": recs["industry"], "風格": recs["style"],
+                                 "綜合分": recs["composite"], "參考買價": recs["buy_price"], "近端停損": recs["stop"], "第一停利": recs["target1"],
+                                 "風報比": recs["rr"], "建議股數": recs["shares"], "金額": recs["amount"], "最大虧損": recs["risk_amt"],
+                                 "買後產業占比%": recs["post_ind_pct"], "為什麼": recs["why"]})
+            st.dataframe(view.round(2), hide_index=True, **STRETCH)
+            st.caption(f"合計投入約 ${recs['amount'].sum():,.0f}，剩餘可動用資金 ${left:,.0f}；若全部觸及停損，合計最大虧損約 ${recs['risk_amt'].sum():,.0f}（{recs['risk_amt'].sum() / capital_base * 100:.1f}% 總資金）。")
+            st.download_button("⬇️ 匯出建議 CSV", data=view.to_csv(index=False).encode("utf-8-sig"), file_name="buy_suggestions.csv", mime="text/csv", key="pb_dl")
+    st.caption("⚠️ 建議股數＝（總資金×單筆風險%）÷（買價−停損），再受單檔上限、產業剩餘額度、可動用現金三重封頂；未計手續費與稅。"
+               "風格與產業分類是粗略規則，推薦不是買賣建議，下單前請自行確認最新報價與基本面。")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _pm_fetch():
+    syms = [s for s, _ in pmk.SYMBOLS]
+
+    def one(s):
+        r = get_macro_series(s)
+        if not r:
+            return s, None
+        ser = r["series"]
+        d5 = (ser.iloc[-1] / ser.iloc[-6] - 1) * 100 if len(ser) > 5 else None
+        bp = (ser.iloc[-1] - ser.iloc[-2]) * 100 if (s == "^TNX" and ser.iloc[-1] < 25) else None
+        return s, dict(value=float(r["value"]), chg_pct=float(r["chg_pct"]), d5=d5, bp=bp, asof=ser.index[-1])
+
+    with _new_pool(6) as ex:
+        return dict(ex.map(one, syms))
+
+PM_EVENTS_FILE = os.path.join(DATA_DIR, "premarket_events.txt")
+
+def render_premarket_page():
+    st.title("📰 盤前必讀")
+    st.caption("開盤前 10 分鐘快速掌握全貌：隔夜美股與期貨、總經風險、新聞與昨日盤面熱點。全部是自動抓取＋規則整理，請點進原文確認重要消息。")
+    if pmk is None:
+        st.error("找不到 premarket.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
+        return
+    directory, _ = get_directory()
+    quotes = _pm_fetch()
+    summ = pmk.build_summary(quotes)
+    gs = quotes.get("^GSPC")
+    asof = gs["asof"].strftime("%m/%d") if gs and gs.get("asof") is not None else "—"
+    st.caption(f"美股最近交易日：{asof}　·　現在台北時間 {pd.Timestamp.now(tz='Asia/Taipei').strftime('%m/%d %H:%M')}")
+
+    st.markdown("#### 1️⃣ 一句話總結")
+    box = {"success": st.success, "error": st.error, "warning": st.warning, "info": st.info}[summ["level"]]
+    box(f"**隔夜氣氛：{summ['label']}**（規則加總分 {summ['score']:+.0f}，使用 {summ['used']} 項指標）")
+    if summ["bullets"]:
+        for pts, text in summ["bullets"]:
+            st.markdown(f"- {'🟢' if pts > 0 else '🔴'} {text}")
+    else:
+        st.caption("目前沒有達到門檻的明顯多空訊號。")
+    if summ["missing"]:
+        st.caption("抓不到的項目：" + "、".join(summ["missing"]))
+    fc = get_market_forecast("0050.TW")
+    if fc:
+        st.markdown(f"**0050 技術面**：{fc['direction']}（分數 {fc['score']}），歷史相似情境隔日上漲機率 "
+                    + (f"{fc['wr']:.0f}%（N={fc['n']}）" if fc['wr'] is not None else "樣本不足") + "。")
+    st.caption("這只是把幾項隔夜指標按規則加減分，不是預測；同分不代表開盤一定同方向。")
+
+    st.markdown("#### 2️⃣ 隔夜行情一覽")
+    rows = []
+    for sym, name in pmk.SYMBOLS:
+        q = quotes.get(sym)
+        if not q:
+            rows.append({"項目": name, "最新": None, "漲跌%": None, "近5日%": None})
+            continue
+        rows.append({"項目": name, "最新": q["value"], "漲跌%": q["chg_pct"], "近5日%": q["d5"]})
+    qdf = pd.DataFrame(rows)
+    try:
+        sty = qdf.style.format({"最新": "{:,.2f}", "漲跌%": "{:+.2f}", "近5日%": "{:+.2f}"}, na_rep="—")
+        color = lambda v: ("color:#c0504d;font-weight:600" if v > 0 else "color:#3f8f66;font-weight:600" if v < 0 else "") if pd.notna(v) else ""
+        st.dataframe((getattr(sty, "map", None) or sty.applymap)(color, subset=["漲跌%", "近5日%"]), hide_index=True, **STRETCH)
+    except Exception:
+        st.dataframe(qdf.round(2), hide_index=True, **STRETCH)
+    st.caption("紅漲綠跌（台股慣例）。期貨與 ADR 的報價時間可能不同步；VIX 與殖利率的「漲」代表恐慌／利率上升，不是好消息。")
+
+    st.markdown("#### 3️⃣ 今日關鍵風險提醒")
+    risks = list(summ["risks"])
+    try:
+        tx = get_taifex_foreign_tx()
+        if tx and tx.get("net") is not None and tx["net"] < 0:
+            risks.append(f"台指期外資淨空單 {abs(tx['net']):,} 口，短線籌碼偏空。")
+    except Exception:
+        pass
+    if risks:
+        for r in risks:
+            st.error("⚠️ " + r)
+    else:
+        st.success("目前沒有觸發任何風險門檻。這不代表沒有風險，只是沒有達到規則設定的警戒線。")
+
+    st.markdown("#### 4️⃣ 國際總經與財經新聞")
+    items = get_news_items()
+    picks = pmk.pick_macro_news(items or [], 8)
+    if picks:
+        for it in picks:
+            tag = classify_news(it["title"], directory)
+            icon = "🟢" if tag["impact"] == "正面" else ("🔴" if tag["impact"] == "負面" else "⚪")
+            st.markdown(f"{icon} [{it['title']}]({it['link']})　<span style='color:#7b8794;font-size:0.85em'>{' '.join(tag['categories'])}</span>", unsafe_allow_html=True)
+        st.caption("以關鍵字挑出和開盤有關的標題，不是語意分析，請以原文為準。")
+    elif items:
+        st.info("今天抓到的新聞裡沒有符合關鍵字的標題。")
+    else:
+        st.info("新聞來源暫時抓不到（RSS 可能改版或失效）。")
+    default_events = ""
+    if os.path.exists(PM_EVENTS_FILE):
+        try:
+            with open(PM_EVENTS_FILE, "r", encoding="utf-8") as f:
+                default_events = f.read()
+        except Exception:
+            pass
+    ev = st.text_area("📅 本週重大事件備忘（自己維護：例如 FOMC 利率決議日、CPI／非農公布日、重要財報日）", value=default_events, height=100, key="pm_events",
+                      help="系統不會自動抓經濟行事曆，請從官方行事曆自行填入。")
+    if st.button("💾 儲存備忘", key="pm_save_events"):
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(PM_EVENTS_FILE, "w", encoding="utf-8") as f:
+                f.write(ev)
+            st.success("已儲存。")
+        except Exception:
+            st.error("儲存失敗，可能是檔案系統無法寫入。")
+    if ev.strip():
+        st.info("**你記錄的本週事件**\n\n" + ev.replace("\n", "\n\n"))
+
+    st.markdown("#### 5️⃣ 昨日盤面熱點")
+    if st.button("🔥 載入昨日族群資金與漲跌", key="pm_heat"):
+        with st.spinner("抓取成交量前 100 大個股報價中…"):
+            pool, _ok = heatmap_pool(directory, 100)
+            tk = tuple(c + directory.get(c, {}).get("suffix", ".TW") for c in pool)
+            hq = fetch_heat_quotes(tk)
+        if hq is None or hq.empty or len(hq) < 5:
+            st.session_state["pm_heat_res"] = None
+            st.warning("報價抓不到，暫時無法顯示盤面熱點。")
+        else:
+            st.session_state["pm_heat_res"] = build_sector_table(hq, directory)
+    hres = st.session_state.get("pm_heat_res")
+    if hres:
+        q_, sec_ = hres
+        big = sec_[sec_["share"] >= 3]
+        pool_s = big if not big.empty else sec_
+        best, worst, top = pool_s.sort_values("chg", ascending=False).iloc[0], pool_s.sort_values("chg").iloc[0], sec_.iloc[0]
+        st.markdown(f"**成交最集中**：{top['sector']}（占 {top['share']:.0f}%，{top['chg']:+.2f}%）　**最強**：{best['sector']}（{best['chg']:+.2f}%）　**最弱**：{worst['sector']}（{worst['chg']:+.2f}%）")
+        h1, h2 = st.columns(2)
+        with h1:
+            st.markdown("**🟢 領漲個股**")
+            for _, r in q_.sort_values("chg", ascending=False).head(5).iterrows():
+                st.markdown(f"- {r['name']}（{r['code']}）{r['chg']:+.2f}%　{r['sector']}")
+        with h2:
+            st.markdown("**🔴 領跌個股**")
+            for _, r in q_.sort_values("chg").head(5).iterrows():
+                st.markdown(f"- {r['name']}（{r['code']}）{r['chg']:+.2f}%　{r['sector']}")
+        st.caption("成交值是買賣雙方總量，不等於資金淨流入；只涵蓋成交量前 100 大個股。")
+
+    st.markdown("#### 6️⃣ 開盤前 10 分鐘檢查清單")
+    st.markdown(
+        "1. 看上面的「一句話總結」與風險提醒，決定今天偏積極還是偏保守。\n"
+        "2. 到「💼 投資組合管理」確認持股離停損價還有多遠、有沒有已觸價的部位。\n"
+        "3. 到「⭐ 每日候選股」或投資組合頁的「明日買進推薦」，只挑風報比與部位大小都合理的標的。\n"
+        "4. 若風險提醒有 2 項以上被觸發，考慮降低單筆風險或把部分停損收緊。")
+    c1, c2, c3 = st.columns(3)
+    if c1.button("💼 檢查我的持股", key="pm_to_pf", **STRETCH):
+        _jump("💼 投資組合管理")
+    if c2.button("⭐ 看每日候選股", key="pm_to_cand", **STRETCH):
+        _jump("⭐ 每日候選股")
+    if c3.button("📡 完整總經雷達", key="pm_to_macro", **STRETCH):
+        _jump("📡 總經雷達")
+    st.caption("⚠️ 以上為自動整理的參考資訊與規則式提醒，不是預測也不構成投資建議；資料來自 Yahoo Finance 與公開新聞來源，可能有延遲或缺漏。")
+
+def _etf_tech_check(codes, directory):
+    loader = globals().get("load_price_only")
+
+    def one(code):
+        suf = directory.get(code, {}).get("suffix", ".TW")
+        df = None
+        for sfx in (suf, ".TWO" if suf == ".TW" else ".TW"):
+            df = loader(code + sfx) if loader else load_stock_data(code + sfx)[1]
+            if df is not None and len(df) >= 40:
+                break
+        else:
+            return None
+        try:
+            d = compute_indicators(df)
+            latest, prev = d.iloc[-1], d.iloc[-2]
+            k = analyze_today_kline(latest['Open'], latest['High'], latest['Low'], latest['Close'])
+            sc = compute_score(latest, prev, k, patterns=None)
+            lv = compute_levels(d, latest, latest['Close'], sc)
+            return dict(score=sc, price=float(latest['Close']), above_ma=bool(latest['Close'] > latest['MA20']), rr=lv['rr'], stop=lv['near_stop'])
+        except Exception:
+            return None
+
+    with _new_pool(6) as ex:
+        return list(ex.map(one, codes))
+
+def render_etf_page():
+    st.title("📊 ETF 專區")
+    st.caption("了解熱門 ETF 的選股邏輯、比較績效，並匯入持股明細追蹤權重變化，作為量化選股的參考。")
+    if etfd is None:
+        st.error("找不到 etf_data.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
+        return
+    directory, _ = get_directory()
+    etfs = etfd.all_etfs(DATA_DIR)
+    t1, t2, t3, t4 = st.tabs(["📖 ETF 導覽", "📈 績效比較", "🔍 持股透視", "➕ 自訂 ETF"])
+
+    with t1:
+        code = st.selectbox("選擇 ETF", list(etfs), format_func=lambda c: f"{c}　{etfs[c]['name']}", key="etf_pick")
+        e = etfs[code]
+        st.markdown(f"### {code}　{e['name']}")
+        st.caption(f"{e['issuer']}　·　{e['kind']}")
+        st.info(e["summary"])
+        st.markdown("**選股／加權邏輯**")
+        st.write(e["logic"])
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown("**✅ 特色**")
+            for x in e["pros"] or ["—"]:
+                st.markdown(f"- {x}")
+        with p2:
+            st.markdown("**⚠️ 要留意**")
+            for x in e["risks"] or ["—"]:
+                st.markdown(f"- {x}")
+        if e["who"]:
+            st.markdown(f"**適合誰**：{e['who']}")
+        st.caption("資料狀態：" + e["checked"])
+        with st.expander("被動式 vs 主動式 ETF：『經理人策略』指的是什麼？"):
+            st.markdown(etfd.PASSIVE_VS_ACTIVE)
+        st.warning("⚠️ 指數規則與持股會調整（例如指數改版、成分股大幅換血），這裡只整理結構性說明，不含最新持股與權重。投資前請以投信公開說明書與官網最新資料為準。")
+
+    with t2:
+        sel = st.multiselect("選擇要比較的 ETF", list(etfs), default=[c for c in ("0050", "0056", "00878", "00929") if c in etfs],
+                             format_func=lambda c: f"{c} {etfs[c]['name']}", key="etf_cmp")
+        if not sel:
+            st.info("請至少選一檔。")
+        else:
+            with st.spinner("抓取價格中…"):
+                closes = get_peer_closes(tuple(sel))
+            if closes is None or closes.empty:
+                st.warning("抓不到價格資料。")
+            else:
+                rows = []
+                for c in closes.columns:
+                    s = closes[c].dropna()
+                    if len(s) < 25:
+                        continue
+                    dd = (s / s.cummax() - 1).min() * 100
+                    rows.append({"ETF": f"{c} {etfs.get(c, {}).get('name', '')}", "近1月%": _ret(s, 20) * 100, "近3月%": _ret(s, 60) * 100,
+                                 "近6月%": _ret(s, 120) * 100, "近1年%": (s.iloc[-1] / s.iloc[0] - 1) * 100,
+                                 "年化波動%": s.pct_change().std() * (252 ** 0.5) * 100, "期間最大回撤%": dd})
+                if rows:
+                    st.dataframe(pd.DataFrame(rows).round(1), hide_index=True, **STRETCH)
+                fig = go.Figure()
+                for c in closes.columns:
+                    s = closes[c].dropna()
+                    if len(s) >= 5:
+                        fig.add_trace(go.Scatter(x=s.index, y=s / s.iloc[0] * 100, mode="lines", name=f"{c} {etfs.get(c, {}).get('name', '')}"))
+                fig.update_layout(height=360, template="plotly_white", margin=dict(l=10, r=10, t=10, b=10), yaxis_title="起點 = 100", legend=dict(orientation="h", y=-0.2))
+                st.plotly_chart(fig, **STRETCH, key="etf_cmp_chart")
+                st.caption("價格來自 Yahoo Finance，是否含股利還原依其資料設定而定，高股息型的報酬可能被低估或高估；僅供相對比較，過去表現不代表未來。")
+
+    with t3:
+        hc = st.selectbox("選擇 ETF", list(etfs), format_func=lambda c: f"{c}　{etfs[c]['name']}", key="etf_hold_pick")
+        with st.expander("📥 匯入／更新持股明細", expanded=not etfd.list_snapshots(DATA_DIR, hc)):
+            st.caption("到投信官網下載該 ETF 的持股明細（Excel／CSV），貼上或上傳。需要有「代號」與「權重」欄位。每匯入一份就存成一個日期快照，累積 2 份以上就能比較權重變化。")
+            if st.button("嘗試從 Yahoo 抓取（台股 ETF 常常抓不到）", key="etf_yf"):
+                got = etfd.fetch_yf_holdings(hc)
+                if got is None:
+                    st.warning("Yahoo 沒有這檔的持股資料，請改用下方貼上或上傳。")
+                else:
+                    etfd.save_snapshot(DATA_DIR, hc, pd.Timestamp.now().strftime("%Y-%m-%d"), got)
+                    st.success(f"已存入 {len(got)} 檔（僅前幾大持股，可能不完整）。")
+                    st.rerun()
+            snap_date = st.date_input("這份持股的資料日期", value=pd.Timestamp.now().date(), key="etf_snap_date")
+            up = st.file_uploader("上傳 CSV", type=["csv"], key="etf_up")
+            txt = st.text_area("或直接貼上（含標題列）", height=120, key="etf_paste")
+            if st.button("儲存這份持股", type="primary", key="etf_save"):
+                try:
+                    if up is not None:
+                        raw = up.getvalue()
+                        try:
+                            txt_in = raw.decode("utf-8-sig")
+                        except UnicodeDecodeError:
+                            txt_in = raw.decode("big5", errors="replace")
+                    else:
+                        txt_in = txt
+                    parsed, notes = etfd.parse_holdings(txt_in)
+                    etfd.save_snapshot(DATA_DIR, hc, snap_date.strftime("%Y-%m-%d"), parsed)
+                    st.success(f"已儲存 {len(parsed)} 檔持股（{snap_date}）。")
+                    for n_ in notes:
+                        st.warning(n_)
+                except Exception as ex_:
+                    st.error(f"匯入失敗：{ex_}")
+        snaps = etfd.list_snapshots(DATA_DIR, hc)
+        if not snaps:
+            st.info("還沒有這檔 ETF 的持股資料，請先匯入。")
+        else:
+            cur_date = st.selectbox("查看哪一天的持股", snaps[::-1], key="etf_snap_view")
+            cur = etfd.load_snapshot(DATA_DIR, hc, cur_date)
+            con = etfd.concentration(cur)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("持股檔數", f"{con['n']}")
+            m2.metric("第一大持股", f"{con['top1']:.1f}%")
+            m3.metric("前五大合計", f"{con['top5']:.1f}%")
+            m4.metric("前十大合計", f"{con['top10']:.1f}%")
+            mine = set()
+            try:
+                pf_ = load_portfolio()
+                mine = set(pf_["代號"].astype(str)) if pf_ is not None and not pf_.empty else set()
+            except Exception:
+                pass
+            view = cur.assign(產業=cur["code"].map(lambda c: directory.get(c, {}).get("ind", "")),
+                              我持有=cur["code"].map(lambda c: "✔" if c in mine else "")).rename(columns={"code": "代號", "name": "名稱", "weight": "權重%"})
+            st.dataframe(view.round(2), hide_index=True, **STRETCH, height=min(38 * (len(view) + 1), 520))
+            ov = [c for c in cur["code"] if c in mine]
+            if ov:
+                st.caption("與你的投資組合重疊：" + "、".join(f"{directory.get(c, {}).get('name', c)}（{c}）" for c in ov))
+            iw = etfd.industry_weights(cur, directory)
+            st.markdown("**產業分布（依證交所產業別）**")
+            st.bar_chart(iw)
+            if len(snaps) >= 2:
+                others = [s for s in snaps if s != cur_date]
+                base_date = st.selectbox("和哪一天比較", others[::-1], key="etf_snap_cmp")
+                dif = etfd.diff_holdings(cur, etfd.load_snapshot(DATA_DIR, hc, base_date))
+                chg = dif[dif["status"] != "不變"]
+                st.markdown(f"**{base_date} → {cur_date} 的持股變化**　新增 {int((dif.status == '新增').sum())}　剔除 {int((dif.status == '剔除').sum())}　"
+                            f"增持 {int((dif.status == '增持').sum())}　減持 {int((dif.status == '減持').sum())}")
+                if chg.empty:
+                    st.caption("兩份持股沒有明顯差異。")
+                else:
+                    st.dataframe(chg.rename(columns={"code": "代號", "name": "名稱", "w_new": "新權重%", "w_old": "舊權重%", "delta": "變動pp", "status": "狀態"}).round(2),
+                                 hide_index=True, **STRETCH)
+                st.caption("權重變動小於 0.05 個百分點視為不變。權重變動也可能只是價格漲跌造成，不一定是經理人或指數主動調整。")
+            nchk = st.slider("技術面體檢：前幾大持股", 5, 15, 10, key="etf_nchk")
+            if st.button("🩺 替前幾大持股做技術面體檢", key="etf_chk"):
+                tops = list(cur.head(nchk)["code"])
+                with st.spinner("計算技術面中…"):
+                    res = _etf_tech_check(tops, directory)
+                rows = [{"代號": c, "名稱": directory.get(c, {}).get("name", ""), "權重%": float(cur.loc[cur.code == c, "weight"].iloc[0]),
+                         "技術分": r["score"] if r else None, "站上月線": ("是" if r["above_ma"] else "否") if r else "—",
+                         "風報比": r["rr"] if r else None} for c, r in zip(tops, res)]
+                st.dataframe(pd.DataFrame(rows).round(2), hide_index=True, **STRETCH)
+                st.caption("用和個股分析相同的技術評分看權重最大的幾檔，只是『參考ETF在買什麼、這些標的現在強不強』，不構成建議。")
+
+    with t4:
+        st.caption("加入你自己關注的 ETF（包含主動式 ETF），之後就能匯入它的持股並追蹤調整。")
+        with st.form("etf_custom_form"):
+            f1, f2 = st.columns(2)
+            ccode = f1.text_input("ETF 代號", placeholder="例如 00981A")
+            cname = f2.text_input("名稱")
+            f3, f4 = st.columns(2)
+            cissuer = f3.text_input("發行投信")
+            ckind = f4.selectbox("類型", ["主動式", "市值型（被動）", "高股息型（被動）", "主題型", "債券型", "其他"])
+            csum = st.text_area("一句話策略說明")
+            clogic = st.text_area("選股／調整邏輯（可貼上公開說明書重點）")
+            if st.form_submit_button("儲存", type="primary"):
+                if not ccode.strip() or not cname.strip():
+                    st.warning("請至少填代號與名稱。")
+                else:
+                    etfd.save_custom(DATA_DIR, ccode.strip().upper(), dict(name=cname.strip(), issuer=cissuer.strip(), kind=ckind, summary=csum.strip(), logic=clogic.strip()))
+                    st.success("已儲存，重新整理後會出現在上面的下拉選單。")
+    st.caption("⚠️ ETF 資料僅供研究參考，不構成投資建議。持股明細與權重請以投信官網為準。")
+
 if app_mode == "🏠 戰情室首頁":
     st.title("🏠 戰情室首頁")
     st.caption("一進來就看重點，不用每頁點過去——下面任何一塊都可以點按鈕直接跳到完整頁面。")
@@ -3356,6 +4107,9 @@ if app_mode == "🏠 戰情室首頁":
         st.caption("僅用三項總經數字做簡單加權，不是嚴謹預測模型，請一定要搭配「📡 總經雷達」完整頁面再判斷。")
     else:
         st.caption("總經資料暫時抓不到，略過每日早報。")
+
+    st.divider()
+    render_market_forecast(tone)
 
     st.divider()
     st.markdown("#### 📊 大盤與總經快照")
@@ -3839,6 +4593,8 @@ elif app_mode == "💼 投資組合管理":
             elif top_ind_pct >= 50:
                 st.warning(f"⚠️ 「{top_ind}」產業佔整體持股 {top_ind_pct:.0f}%，集中度偏高，留意該產業的系統性風險。")
 
+        render_portfolio_balance(rows, cash_on_hand, total_capital, total_mv, directory)
+
         exp_p1, exp_p2 = st.columns(2)
         with exp_p1:
             csv_pf = table_df.to_csv(index=False).encode("utf-8-sig")
@@ -3860,6 +4616,12 @@ elif app_mode == "💼 投資組合管理":
                 st.rerun()
 
     st.caption("⚠️ 市值、損益、操作建議與風控指標皆為規則式試算，未計入手續費、交易稅與股利，僅供個人記錄與風控參考，不構成投資建議。")
+
+elif app_mode == "📰 盤前必讀":
+    render_premarket_page()
+
+elif app_mode == "📊 ETF 專區":
+    render_etf_page()
 
 elif app_mode == "🤖 模擬自動交易":
     render_sandbox_page()
@@ -4642,7 +5404,7 @@ elif app_mode == "📈 個股分析":
                   "**不代表、也不保證明日實際漲跌**，不構成投資建議。權重為經驗設定，非統計最佳化，可信度請以左方「隔日上漲機率」旁的樣本數與「🧪 回測驗證」分頁為準。")
 
         if st.button("📝 存入策略日誌", key=f"journal_overview_{ticker}"):
-            horizon = historical_horizon_stats(df, BUCKET_ENTRY_SCORE.get(bucket, 0))
+            horizon = historical_horizon_stats(df, bucket)
             ok = append_journal_entry({
                 "存入時間": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
                 "代號": pure, "名稱": stock_name, "分數": score, "分數區間": bucket,

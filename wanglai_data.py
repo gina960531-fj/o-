@@ -304,14 +304,20 @@ def week_returns(codes, closes, d0, d1):
     return r
 
 
-def score_weeks(dates, snaps, closes, bench, cfg=None, top_n=50, tie=0.1):
+def score_weeks(dates, snaps, closes, bench, cfg=None, top_n=50, tie=0.1, price_dates=None):
     """
-    每一週：名單＝上週集保變動（dates[k-1]→dates[k]）大戶增幅前 N（買組）與減幅前 N（賣組/散戶買組），
-    報酬＝dates[k] 收盤 → dates[k+1] 收盤。勝負平：買組與賣組平均報酬差距小於 tie 個百分點算平。
+    名單＝dates[k-1]→dates[k] 的集保變動；報酬＝「進場價日」收盤 → 「下一週進場價日」收盤。
+    price_dates：{快照日: 實際可進場的價格日}。集保資料是事後才公布，不能用快照日（週五）收盤當進場價。
+    price_dates=None 時退回舊行為（只給示範資料用）。
     """
+    pdm = price_dates if price_dates is not None else {d: d for d in dates}
     rows = []
     for k in range(1, len(dates) - 1):
-        d0, d1 = dates[k], dates[k + 1]
+        d0, d1 = pdm.get(dates[k]), pdm.get(dates[k + 1])
+        if d0 is None or d1 is None:
+            continue
+        if d0 not in closes.columns or d1 not in closes.columns:
+            continue
         d = weekly_delta(snaps[dates[k]], snaps[dates[k - 1]], cfg)
         buy = d.sort_values("big_d", ascending=False).head(top_n).index
         sell = d.sort_values("big_d", ascending=True).head(top_n).index
@@ -321,7 +327,8 @@ def score_weeks(dates, snaps, closes, bench, cfg=None, top_n=50, tie=0.1):
         b = (bench[d1] / bench[d0] - 1) * 100
         diff = rb.mean() - rs.mean()
         rows.append({
-            "list_date": d0, "end_date": d1, "buy_avg": rb.mean(), "sell_avg": rs.mean(), "bench": b,
+            "list_date": dates[k], "entry_date": d0, "end_date": d1,
+            "buy_avg": rb.mean(), "sell_avg": rs.mean(), "bench": b,
             "buy_med": rb.median(), "sell_med": rs.median(),
             "buy_up": int((rb > 0).sum()), "buy_dn": int((rb < 0).sum()), "buy_n": len(rb),
             "sell_up": int((rs > 0).sum()), "sell_dn": int((rs < 0).sum()), "sell_n": len(rs),
