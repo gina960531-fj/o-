@@ -74,19 +74,35 @@ def parse_tpex(data):
     return out
 
 
-def fetch_official(timeout=60):
-    """回傳 (rows: {ticker: row}, messages: list[str])。任何一邊抓失敗都只會少一邊，不會丟例外。"""
-    rows, msgs = {}, []
+def fetch_source(name, timeout=(10, 40), retries=1):
+    """抓單一來源（'twse' 上市／'tpex' 上櫃）。失敗會丟例外，方便呼叫端用快取機制『失敗不快取』。"""
     if requests is None:
-        return rows, ["沒有安裝 requests"]
-    for name, url, parser in (("上市", TWSE_URL, parse_twse), ("上櫃", TPEX_URL, parse_tpex)):
+        raise RuntimeError("沒有安裝 requests")
+    url, parser = {"twse": (TWSE_URL, parse_twse), "tpex": (TPEX_URL, parse_tpex)}[name]
+    last = None
+    for _ in range(retries + 1):
         try:
             r = requests.get(url, headers=HEADERS, timeout=timeout)
-            part = parser(r.json())
-            msgs.append(f"{name}：HTTP {r.status_code}，解析出 {len(part)} 檔")
+            r.raise_for_status()
+            rows = parser(r.json())
+            if rows:
+                return rows
+            last = RuntimeError("解析不到任何資料")
+        except Exception as e:
+            last = e
+    raise last
+
+
+def fetch_official(timeout=(10, 40), retries=1):
+    """回傳 (rows: {ticker: row}, messages: list[str])。任何一邊抓失敗都只會少一邊，不會丟例外。"""
+    rows, msgs = {}, []
+    for name, label in (("twse", "上市"), ("tpex", "上櫃")):
+        try:
+            part = fetch_source(name, timeout, retries)
+            msgs.append(f"{label}：解析出 {len(part)} 檔")
             rows.update(part)
         except Exception as e:
-            msgs.append(f"{name}：失敗（{type(e).__name__}: {str(e)[:80]}）")
+            msgs.append(f"{label}：失敗（{type(e).__name__}: {str(e)[:80]}）")
     return rows, msgs
 
 
