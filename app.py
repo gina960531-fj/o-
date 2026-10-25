@@ -42,6 +42,10 @@ try:
 except Exception:
     pmk = None
 try:
+    import official_quotes as oq
+except Exception:
+    oq = None
+try:
     import overnight_edge as oed
 except Exception:
     oed = None
@@ -2483,7 +2487,7 @@ def get_market_volume_snapshot():
 
 def build_smart_pool(directory, size=150):
     """依成交量排序取流動性前N檔；抓不到就退回內建常用清單（附帶是否成功的旗標）。"""
-    vol_map = get_market_volume_snapshot()
+    vol_map = get_official_liquidity() or get_market_volume_snapshot()
     if not vol_map:
         return list(INDUSTRY_MAP.keys()), False
     ranked = sorted(vol_map.items(), key=lambda x: x[1], reverse=True)
@@ -2515,8 +2519,16 @@ def _heat_row(t, close_s, vol_s):
 def fetch_heat_quotes(tickers):
     """批次抓最近幾天的收盤價與成交量；批次下載失敗或漏掉的個股，退回逐檔補抓。"""
     rows, got = [], set()
+    _off = get_official_daily()
+    if _off:
+        _by_code = {r["code"]: r for r in _off.values()}
+        for t in tickers:
+            r = _by_code.get(str(t).split(".")[0])
+            if r:
+                rows.append({"ticker": t, "close": r["close"], "prev": r["prev"], "chg": r["chg"], "value": r["value"], "asof": r["asof"]})
+                got.add(t)
     try:
-        raw = yf.download(list(tickers), period="5d", group_by="ticker", progress=False, threads=True, auto_adjust=False)
+        raw = yf.download([t for t in tickers if t not in got], period="5d", group_by="ticker", progress=False, threads=True, auto_adjust=False)
         if raw is not None and not raw.empty and isinstance(raw.columns, pd.MultiIndex):
             top = set(raw.columns.get_level_values(0))
             for t in tickers:
@@ -2538,10 +2550,31 @@ def fetch_heat_quotes(tickers):
             rows += [r for r in ex.map(one, missing) if r]
     return pd.DataFrame(rows)
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _official_cached():
+    """證交所＋櫃買每日收盤行情。抓失敗或檔數太少就丟例外（不會被快取），由外層退回 Yahoo。"""
+    if oq is None:
+        raise RuntimeError("official_quotes 模組不存在")
+    rows, _msgs = oq.fetch_official()
+    if len(rows) < 300:
+        raise RuntimeError("官方資料檔數過少")
+    return rows
+
+def get_official_daily():
+    try:
+        return _official_cached()
+    except Exception:
+        return None
+
+def get_official_liquidity():
+    """{代號: 成交值}，用成交值排流動性（比成交股數更不會被低價股誤導）。"""
+    off = get_official_daily()
+    return oq.liquidity(off) if off else None
+
 def heatmap_pool(directory, size):
     """挑出『成交量前N大』的上市櫃個股（不含ETF）；抓不到全市場成交量就退回內建常用股名單。"""
     codes = [c for c, v in directory.items() if v.get("ind") not in ("ETF", None)]
-    vol_map = get_market_volume_snapshot()
+    vol_map = get_official_liquidity() or get_market_volume_snapshot()
     if vol_map:
         ranked = sorted([c for c in codes if c in vol_map], key=lambda c: vol_map[c], reverse=True)[:size]
         if len(ranked) >= 20:
