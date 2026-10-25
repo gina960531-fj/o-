@@ -46,6 +46,10 @@ try:
 except Exception:
     oq = None
 try:
+    import price_alerts as pal
+except Exception:
+    pal = None
+try:
     import overnight_edge as oed
 except Exception:
     oed = None
@@ -623,7 +627,7 @@ HOME_MODE = "🏠 戰情室首頁"
 NAV_GROUPS = [
     ("search",   "🔍 選股雷達", ["🔥 資金熱力圖", "🐋 大戶籌碼", "⭐ 每日候選股", "🗂 觀察清單掃描"]),
     ("research", "📈 研究室",   ["📰 盤前必讀", "📈 個股分析", "📡 總經雷達", "📊 ETF 專區"]),
-    ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🤖 模擬自動交易"]),
+    ("desk",     "💼 操盤室",   ["💼 投資組合管理", "🔔 到價通知", "🤖 模擬自動交易"]),
     ("academy",  "🎓 覆盤學院", ["📝 策略日誌", "📚 教學庫"]),
 ]
 ALL_MODES = [HOME_MODE] + [m for _, _, ms in NAV_GROUPS for m in ms]
@@ -1467,9 +1471,11 @@ def get_directory():
                 if v["ind"] == "其他" and c in d:
                     v["ind"] = d[c]["ind"]
                 d[c] = v
+            _add_official_names(d)
             return d, True
         except Exception:
             st.session_state["_dir_failed_at"] = time.time()
+    _add_official_names(d)
     return d, False
 
 def search_stocks(query, directory, limit=100):
@@ -2550,26 +2556,47 @@ def fetch_heat_quotes(tickers):
             rows += [r for r in ex.map(one, missing) if r]
     return pd.DataFrame(rows)
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _official_cached():
-    """證交所＋櫃買每日收盤行情。抓失敗或檔數太少就丟例外（不會被快取），由外層退回 Yahoo。"""
+@st.cache_resource
+def _official_fail_log():
+    return {}
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _official_src_cached(name):
+    """單一來源（twse／tpex）的每日收盤行情。失敗或檔數太少就丟例外（不會被快取）。"""
     if oq is None:
         raise RuntimeError("official_quotes 模組不存在")
-    rows, _msgs = oq.fetch_official()
-    if len(rows) < 300:
+    rows = oq.fetch_source(name)
+    if len(rows) < (200 if name == "twse" else 30):
         raise RuntimeError("官方資料檔數過少")
     return rows
 
 def get_official_daily():
-    try:
-        return _official_cached()
-    except Exception:
-        return None
+    """上市＋上櫃合併；任何一邊失敗就只用另一邊，失敗後 5 分鐘內不再重試。回傳 {ticker: row} 或 None。"""
+    out, fails = {}, _official_fail_log()
+    for name in ("twse", "tpex"):
+        if time.time() - fails.get(name, 0) < 300:
+            continue
+        try:
+            out.update(_official_src_cached(name))
+        except Exception:
+            fails[name] = time.time()
+    return out or None
 
 def get_official_liquidity():
     """{代號: 成交值}，用成交值排流動性（比成交股數更不會被低價股誤導）。"""
     off = get_official_daily()
     return oq.liquidity(off) if off else None
+
+def _add_official_names(d):
+    """用官方每日收盤行情補上名單裡缺的代號：新上市 ETF（代號 00 開頭）與其他缺漏個股。"""
+    off = get_official_daily()
+    if not off:
+        return d
+    for t, r in off.items():
+        code = r["code"]
+        if code not in d:
+            d[code] = dict(name=r["name"] or code, ind="ETF" if code.startswith("00") else "其他", suffix=".TWO" if t.endswith(".TWO") else ".TW")
+    return d
 
 def heatmap_pool(directory, size):
     """挑出『成交量前N大』的上市櫃個股（不含ETF）；抓不到全市場成交量就退回內建常用股名單。"""
@@ -3348,7 +3375,7 @@ def render_sandbox_page():
             f1, f2 = st.columns(2)
             pick = f1.multiselect("策略", sorted(lg["策略"].unique()), key="sb_log_strat")
             acts = f2.multiselect("動作", sorted(lg["動作"].unique()), key="sb_log_act")
-            v = lg[(lg["策略"].isin(pick) if pick else True) & (lg["動作"].isin(acts) if acts else True)].iloc[::-1]
+            v = lg[(lg["策略"].isin(pick) if pick else pd.Series(True, index=lg.index)) & (lg["動作"].isin(acts) if acts else pd.Series(True, index=lg.index))].iloc[::-1]
             st.dataframe(v, hide_index=True, **STRETCH)
             st.download_button("⬇️ 匯出 CSV", data=v.to_csv(index=False).encode("utf-8-sig"), file_name="sandbox_log.csv", mime="text/csv")
 
@@ -4016,32 +4043,86 @@ def _etf_tech_check(codes, directory):
     with _new_pool(6) as ex:
         return list(ex.map(one, codes))
 
+def _guess_etf_kind(name):
+    n = str(name)
+    if "主動" in n:
+        return "主動式"
+    if any(k in n for k in ("高息", "高股息", "股息", "優息", "收益", "配息")):
+        return "高股息型（被動）"
+    if "債" in n:
+        return "債券型"
+    if any(k in n for k in ("半導體", "科技", "AI", "PCB", "電動車", "5G", "機器人", "太空", "ESG", "永續")):
+        return "主題型"
+    return "其他"
+
 def render_etf_page():
     st.title("📊 ETF 專區")
-    st.caption("了解熱門 ETF 的選股邏輯、比較績效，並匯入持股明細追蹤權重變化，作為量化選股的參考。")
+    st.caption("了解熱門 ETF 的選股邏輯、查看全市場 ETF（含新上市與主動式）、比較績效，並匯入持股明細追蹤權重變化。")
     if etfd is None:
         st.error("找不到 etf_data.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
         return
     directory, _ = get_directory()
     etfs = etfd.all_etfs(DATA_DIR)
-    t1, t2, t3, t4 = st.tabs(["📖 ETF 導覽", "📈 績效比較", "🔍 持股透視", "➕ 自訂 ETF"])
+    off = get_official_daily() or {}
+    by_code = {r["code"]: r for r in off.values()}
+    t0, t1, t2, t3, t4 = st.tabs(["🧭 市場總覽", "📖 ETF 導覽", "📈 績效比較", "🔍 持股透視", "➕ 自訂 ETF"])
+
+    with t0:
+        etf_rows = [r for r in off.values() if r["code"].startswith("00")]
+        if not off:
+            st.warning("官方每日行情暫時抓不到（證交所／櫃買），無法列出市場上的 ETF。稍後按 F5 重試。")
+        else:
+            has_tpex = any(t.endswith(".TWO") for t in off)
+            if not has_tpex:
+                st.warning("目前只抓到上市資料，上櫃 ETF 暫時不會顯示（櫃買來源逾時，5 分鐘後會自動重試）。")
+            q = st.text_input("搜尋代號或名稱", key="etf_mkt_q", placeholder="例如 主動、半導體、00981")
+            kinds = ["全部", "主動式", "高股息型（被動）", "債券型", "主題型", "其他"]
+            kf = st.radio("類型（依名稱推測）", kinds, horizontal=True, key="etf_mkt_kind")
+            df = pd.DataFrame([{"代號": r["code"], "名稱": r["name"], "市場": "上櫃" if r["ticker"].endswith(".TWO") else "上市",
+                                "類型": _guess_etf_kind(r["name"]), "收盤": r["close"], "漲跌%": r["chg"], "成交值(億)": r["value"] / 1e8,
+                                "已在追蹤": "✔" if r["code"] in etfs else ""} for r in etf_rows])
+            if not df.empty:
+                if q.strip():
+                    df = df[df["代號"].str.contains(q.strip(), case=False) | df["名稱"].str.contains(q.strip(), case=False)]
+                if kf != "全部":
+                    df = df[df["類型"] == kf]
+                df = df.sort_values("成交值(億)", ascending=False)
+            asof = etf_rows[0]["asof"] if etf_rows else ""
+            st.caption(f"資料日期 {asof}（官方每日收盤，不是即時報價）　·　共 {len(df)} 檔")
+            st.dataframe(df.round(2), hide_index=True, **STRETCH, height=min(38 * (len(df) + 1), 560))
+            addable = [c for c in df["代號"] if c not in etfs] if not df.empty else []
+            pick = st.multiselect("加入我的 ETF 清單（之後可在導覽、績效比較、持股透視裡使用）", addable[:300],
+                                  format_func=lambda c: f"{c} {by_code[c]['name']}" if c in by_code else c, key="etf_mkt_add")
+            if st.button("➕ 加入追蹤", key="etf_mkt_add_btn") and pick:
+                for c in pick:
+                    etfd.save_custom(DATA_DIR, c, dict(name=by_code[c]["name"], issuer="", kind=_guess_etf_kind(by_code[c]["name"]), summary="", logic=""))
+                st.success(f"已加入 {len(pick)} 檔。選股邏輯尚未填寫，可到「➕ 自訂 ETF」補上。")
+                st.rerun()
+            st.caption("類型是依名稱關鍵字推測，不一定準；名單來自證交所與櫃買每日收盤行情，所以新上市的 ETF（含主動式）在有成交後就會出現。")
 
     with t1:
         code = st.selectbox("選擇 ETF", list(etfs), format_func=lambda c: f"{c}　{etfs[c]['name']}", key="etf_pick")
         e = etfs[code]
         st.markdown(f"### {code}　{e['name']}")
-        st.caption(f"{e['issuer']}　·　{e['kind']}")
-        st.info(e["summary"])
+        st.caption(f"{e['issuer'] or '發行投信未填'}　·　{e['kind']}")
+        r = by_code.get(code)
+        if r:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("最近收盤", f"{r['close']:.2f}", f"{r['chg']:+.2f}%", delta_color="off")
+            m2.metric("成交值", f"{r['value'] / 1e8:.1f} 億")
+            m3.metric("資料日期", r["asof"])
+        if e["summary"]:
+            st.info(e["summary"])
         st.markdown("**選股／加權邏輯**")
-        st.write(e["logic"])
+        st.write(e["logic"] or "（尚未填寫。到「➕ 自訂 ETF」貼上公開說明書的選股重點，或用「🔍 持股透視」匯入持股後自己觀察。）")
         p1, p2 = st.columns(2)
         with p1:
             st.markdown("**✅ 特色**")
-            for x in e["pros"] or ["—"]:
+            for x in e["pros"] or ["（尚未填寫）"]:
                 st.markdown(f"- {x}")
         with p2:
             st.markdown("**⚠️ 要留意**")
-            for x in e["risks"] or ["—"]:
+            for x in e["risks"] or ["（尚未填寫）"]:
                 st.markdown(f"- {x}")
         if e["who"]:
             st.markdown(f"**適合誰**：{e['who']}")
@@ -4061,6 +4142,9 @@ def render_etf_page():
             if closes is None or closes.empty:
                 st.warning("抓不到價格資料。")
             else:
+                short = [c for c in sel if c not in closes.columns]
+                if short:
+                    st.caption("以下抓不到足夠的歷史價格（新上市不到約 25 個交易日，或 Yahoo 沒有資料）：" + "、".join(short))
                 rows = []
                 for c in closes.columns:
                     s = closes[c].dropna()
@@ -4079,12 +4163,12 @@ def render_etf_page():
                         fig.add_trace(go.Scatter(x=s.index, y=s / s.iloc[0] * 100, mode="lines", name=f"{c} {etfs.get(c, {}).get('name', '')}"))
                 fig.update_layout(height=360, template="plotly_white", margin=dict(l=10, r=10, t=10, b=10), yaxis_title="起點 = 100", legend=dict(orientation="h", y=-0.2))
                 st.plotly_chart(fig, **STRETCH, key="etf_cmp_chart")
-                st.caption("價格來自 Yahoo Finance，是否含股利還原依其資料設定而定，高股息型的報酬可能被低估或高估；僅供相對比較，過去表現不代表未來。")
+                st.caption("價格來自 Yahoo Finance，是否含股利還原依其資料設定而定；僅供相對比較，過去表現不代表未來。")
 
     with t3:
         hc = st.selectbox("選擇 ETF", list(etfs), format_func=lambda c: f"{c}　{etfs[c]['name']}", key="etf_hold_pick")
         with st.expander("📥 匯入／更新持股明細", expanded=not etfd.list_snapshots(DATA_DIR, hc)):
-            st.caption("到投信官網下載該 ETF 的持股明細（Excel／CSV），貼上或上傳。需要有「代號」與「權重」欄位。每匯入一份就存成一個日期快照，累積 2 份以上就能比較權重變化。")
+            st.caption("到投信官網下載該 ETF 的持股明細（Excel／CSV），貼上或上傳。需要有「代號」與「權重」欄位。每匯入一份就存成一個日期快照，累積 2 份以上就能比較權重變化（主動式 ETF 尤其適合用來看經理人的調整）。")
             if st.button("嘗試從 Yahoo 抓取（台股 ETF 常常抓不到）", key="etf_yf"):
                 got = etfd.fetch_yf_holdings(hc)
                 if got is None:
@@ -4159,29 +4243,160 @@ def render_etf_page():
                 with st.spinner("計算技術面中…"):
                     res = _etf_tech_check(tops, directory)
                 rows = [{"代號": c, "名稱": directory.get(c, {}).get("name", ""), "權重%": float(cur.loc[cur.code == c, "weight"].iloc[0]),
-                         "技術分": r["score"] if r else None, "站上月線": ("是" if r["above_ma"] else "否") if r else "—",
-                         "風報比": r["rr"] if r else None} for c, r in zip(tops, res)]
+                         "技術分": r_["score"] if r_ else None, "站上月線": ("是" if r_["above_ma"] else "否") if r_ else "—",
+                         "風報比": r_["rr"] if r_ else None} for c, r_ in zip(tops, res)]
                 st.dataframe(pd.DataFrame(rows).round(2), hide_index=True, **STRETCH)
                 st.caption("用和個股分析相同的技術評分看權重最大的幾檔，只是『參考ETF在買什麼、這些標的現在強不強』，不構成建議。")
 
     with t4:
-        st.caption("加入你自己關注的 ETF（包含主動式 ETF），之後就能匯入它的持股並追蹤調整。")
+        st.caption("填寫或修改你關注的 ETF 資料（包含主動式 ETF）。新上市的 ETF 可以先到「🧭 市場總覽」一鍵加入，再回來補上選股邏輯。")
+        existing = etfd.load_custom(DATA_DIR)
+        edit_code = st.selectbox("要編輯哪一檔", ["（新增一檔）"] + list(existing), key="etf_edit_pick",
+                                 format_func=lambda c: c if c.startswith("（") else f"{c}　{existing[c].get('name', '')}")
+        cur_e = existing.get(edit_code, {}) if not edit_code.startswith("（") else {}
+        kind_opts = ["主動式", "市值型（被動）", "高股息型（被動）", "主題型", "債券型", "其他"]
         with st.form("etf_custom_form"):
             f1, f2 = st.columns(2)
-            ccode = f1.text_input("ETF 代號", placeholder="例如 00981A")
-            cname = f2.text_input("名稱")
+            ccode = f1.text_input("ETF 代號", value="" if edit_code.startswith("（") else edit_code, placeholder="例如 00981A")
+            cname = f2.text_input("名稱", value=cur_e.get("name", ""))
             f3, f4 = st.columns(2)
-            cissuer = f3.text_input("發行投信")
-            ckind = f4.selectbox("類型", ["主動式", "市值型（被動）", "高股息型（被動）", "主題型", "債券型", "其他"])
-            csum = st.text_area("一句話策略說明")
-            clogic = st.text_area("選股／調整邏輯（可貼上公開說明書重點）")
+            cissuer = f3.text_input("發行投信", value=cur_e.get("issuer", ""))
+            ckind = f4.selectbox("類型", kind_opts, index=kind_opts.index(cur_e.get("kind")) if cur_e.get("kind") in kind_opts else 0)
+            csum = st.text_area("一句話策略說明", value=cur_e.get("summary", ""))
+            clogic = st.text_area("選股／調整邏輯（可貼上公開說明書重點）", value=cur_e.get("logic", ""))
             if st.form_submit_button("儲存", type="primary"):
                 if not ccode.strip() or not cname.strip():
                     st.warning("請至少填代號與名稱。")
                 else:
                     etfd.save_custom(DATA_DIR, ccode.strip().upper(), dict(name=cname.strip(), issuer=cissuer.strip(), kind=ckind, summary=csum.strip(), logic=clogic.strip()))
-                    st.success("已儲存，重新整理後會出現在上面的下拉選單。")
+                    st.success("已儲存，重新整理後會更新。")
     st.caption("⚠️ ETF 資料僅供研究參考，不構成投資建議。持股明細與權重請以投信官網為準。")
+
+def _alert_prices(tickers):
+    """現價：優先用 Yahoo 分 K（可能延遲 15～20 分鐘）；抓不到的退回官方最近收盤價。"""
+    px = {}
+    try:
+        live, _src = sb_live_prices(tuple(tickers))
+        px.update(live)
+    except Exception:
+        pass
+    off = get_official_daily() or {}
+    by_code = {r["code"]: r for r in off.values()}
+    for t in tickers:
+        if t not in px:
+            r = by_code.get(t.split(".")[0])
+            if r:
+                px[t] = r["close"]
+    return px
+
+def _telegram_cfg():
+    try:
+        return st.secrets.get("TELEGRAM_BOT_TOKEN"), st.secrets.get("TELEGRAM_CHAT_ID")
+    except Exception:
+        return None, None
+
+def render_alerts_page():
+    st.title("🔔 到價通知")
+    st.caption("設定「漲到／跌到某個價格」就提醒你。網頁沒有背景執行，**只有這個頁面開著時才會檢查**；關掉分頁就停止。報價可能延遲 15～20 分鐘。")
+    if pal is None:
+        st.error("找不到 price_alerts.py。請把它和 app.py 放在同一個資料夾，再重新整理。")
+        return
+    directory, _ = get_directory()
+
+    with st.expander("➕ 新增到價通知", expanded=not pal.load_alerts(DATA_DIR)):
+        q = st.text_input("搜尋股票或 ETF（代號或名稱）", key="al_q", placeholder="例如 2330 或 台積電")
+        opts, total = search_stocks(q, directory)
+        code = st.selectbox("選擇", opts, key="al_code", format_func=lambda c: f"{directory[c]['name']}（{c}）" if c in directory else c) if opts else None
+        a1, a2, a3 = st.columns([1.2, 1, 2])
+        op_label = a1.radio("條件", ["漲到（≥）", "跌到（≤）"], key="al_op")
+        price = a2.number_input("目標價", min_value=0.0, step=0.5, key="al_price")
+        note = a3.text_input("備註（選填）", key="al_note", placeholder="例如：突破壓力、跌破停損")
+        if code:
+            r = {x["code"]: x for x in (get_official_daily() or {}).values()}.get(code)
+            if r:
+                st.caption(f"參考：最近收盤 {r['close']:.2f}（{r['chg']:+.2f}%，{r['asof']}）")
+        if st.button("儲存這則通知", type="primary", key="al_add"):
+            if not code or price <= 0:
+                st.warning("請選擇股票並輸入大於 0 的目標價。")
+            else:
+                suffix = directory.get(code, {}).get("suffix", ".TW")
+                pal.add_alert(DATA_DIR, code + suffix, code, directory.get(code, {}).get("name", code), ">=" if op_label.startswith("漲") else "<=", price, note)
+                st.success("已儲存。")
+                st.rerun()
+
+    token, chat = _telegram_cfg()
+    with st.expander("📲 手機推播（Telegram，選填）"):
+        if token and chat:
+            st.success("已偵測到 Telegram 設定：觸發時會同時推播到你的手機。")
+            if st.button("送一則測試訊息", key="al_tg_test"):
+                ok, msg = pal.send_telegram(token, chat, "✅ 到價通知測試訊息")
+                (st.success if ok else st.error)("已送出" if ok else f"送出失敗：{msg}")
+        else:
+            st.markdown(
+                "1. 在 Telegram 搜尋 **@BotFather**，傳 `/newbot` 建立機器人，取得 **token**。\n"
+                "2. 對你的機器人傳一句話，再開 `https://api.telegram.org/bot<token>/getUpdates` 找到 `chat` 裡的 **id**。\n"
+                "3. 到 Streamlit Cloud 的 App 設定 → **Secrets**，貼上：\n\n"
+                "```\nTELEGRAM_BOT_TOKEN = \"你的token\"\nTELEGRAM_CHAT_ID = \"你的chat id\"\n```\n"
+                "token 是密碼，不要寫進程式或上傳到 GitHub。")
+
+    alerts = pal.load_alerts(DATA_DIR)
+    if not alerts:
+        st.info("還沒有任何到價通知。")
+        return
+
+    c1, c2, c3 = st.columns([1.3, 1, 2])
+    monitor = c1.toggle("🔴 自動檢查", key="al_monitor", help="開著這個頁面時，每隔一段時間自動檢查。")
+    interval = c2.selectbox("間隔", [30, 60, 120], index=1, format_func=lambda x: f"{x} 秒", key="al_interval")
+
+    def _check_body():
+        al = pal.load_alerts(DATA_DIR)
+        act = [a for a in al if a.get("active", True)]
+        px = _alert_prices(sorted({a["ticker"] for a in al})) if al else {}
+        hits = pal.evaluate(al, px)
+        if hits:
+            pal.mark_triggered(DATA_DIR, hits)
+            tk, cid = _telegram_cfg()
+            for a, p_ in hits:
+                msg = pal.format_message(a, p_)
+                st.success(msg)
+                st.toast(msg)
+                if tk and cid:
+                    ok, info = pal.send_telegram(tk, cid, msg)
+                    if not ok:
+                        st.caption(f"Telegram 推播失敗：{info}")
+            al = pal.load_alerts(DATA_DIR)
+        rows = []
+        for a in al:
+            p_ = px.get(a["ticker"])
+            rows.append({"股票": f"{a['name']}（{a['code']}）", "條件": f"{pal.OPS[a['op']]} {a['price']:g}", "現價": p_,
+                         "距目標%": (a["price"] / p_ - 1) * 100 if p_ else None,
+                         "狀態": "✅ 已觸發 " + str(a.get("triggered_at") or "") if not a.get("active", True) else "⏳ 監控中", "備註": a.get("note", "")})
+        st.dataframe(pd.DataFrame(rows).round(2), hide_index=True, **STRETCH)
+        missing = [a["code"] for a in act if a["ticker"] not in px]
+        if missing:
+            st.caption("抓不到現價所以暫時無法判斷：" + "、".join(missing))
+        st.caption(f"最近檢查：{pd.Timestamp.now(tz='Asia/Taipei').strftime('%H:%M:%S')}　·　報價可能延遲；休市時看到的是最近一個收盤價。")
+
+    frag = getattr(st, "fragment", None)
+    if monitor and frag is not None:
+        frag(run_every=int(interval))(_check_body)()
+    else:
+        if monitor:
+            st.warning("你的 Streamlit 版本不支援自動重新整理，請改用「立即檢查」。")
+        st.button("🔄 立即檢查", key="al_check_now")
+        _check_body()
+
+    with st.expander("管理通知"):
+        labels = {a["id"]: f"{a['name']}（{a['code']}）{pal.OPS[a['op']]} {a['price']:g}" + ("　[已觸發]" if not a.get("active", True) else "") for a in alerts}
+        chosen = st.multiselect("選擇通知", list(labels), format_func=lambda i: labels[i], key="al_manage")
+        m1, m2 = st.columns(2)
+        if m1.button("🔁 重新啟用", key="al_rearm") and chosen:
+            pal.rearm(DATA_DIR, chosen)
+            st.rerun()
+        if m2.button("🗑️ 刪除", key="al_del") and chosen:
+            pal.remove_alerts(DATA_DIR, chosen)
+            st.rerun()
+    st.caption("⚠️ 雲端環境重啟或重新部署時，本機存的通知可能會消失。要在頁面關閉時也收到通知，需要另外做排程（例如 GitHub Actions），可以再跟我說。")
 
 if app_mode == "🏠 戰情室首頁":
     st.title("🏠 戰情室首頁")
@@ -4717,6 +4932,9 @@ elif app_mode == "💼 投資組合管理":
                 st.rerun()
 
     st.caption("⚠️ 市值、損益、操作建議與風控指標皆為規則式試算，未計入手續費、交易稅與股利，僅供個人記錄與風控參考，不構成投資建議。")
+
+elif app_mode == "🔔 到價通知":
+    render_alerts_page()
 
 elif app_mode == "📰 盤前必讀":
     render_premarket_page()
