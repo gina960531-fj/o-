@@ -182,6 +182,32 @@ def pill(text, level="gray"):
 import json
 
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".quant_radar_data")
+
+# ---- 資料持久化：和私人 GitHub 資料專案同步（需要在 Secrets 設定 GITHUB_DATA_TOKEN 與 GITHUB_DATA_REPO）----
+try:
+    import persist
+except Exception:
+    persist = None
+
+def _secret(name):
+    try:
+        v = st.secrets.get(name)
+    except Exception:
+        v = None
+    return v or os.environ.get(name)
+
+@st.cache_resource(show_spinner="同步雲端資料中…")
+def _persist_boot(token, repo):
+    sync = persist.make_sync(DATA_DIR, token, repo) if persist else None
+    if sync is not None:
+        sync.boot_pull()
+        sync.start_background(60)
+    return sync
+
+try:
+    PERSIST = _persist_boot(_secret("GITHUB_DATA_TOKEN"), _secret("GITHUB_DATA_REPO"))
+except Exception:
+    PERSIST = None
 WATCHLIST_FILE = os.path.join(DATA_DIR, "watchlist.json")
 JOURNAL_FILE = os.path.join(DATA_DIR, "journal.csv")
 JOURNAL_COLUMNS = ["存入時間", "代號", "名稱", "分數", "分數區間", "方向", "存入時股價",
@@ -4398,8 +4424,29 @@ def render_alerts_page():
             st.rerun()
     st.caption("⚠️ 雲端環境重啟或重新部署時，本機存的通知可能會消失。要在頁面關閉時也收到通知，需要另外做排程（例如 GitHub Actions），可以再跟我說。")
 
+def render_sync_status():
+    if PERSIST is None:
+        st.warning("☁️ 雲端資料同步：尚未設定。目前資料只存在伺服器的暫存硬碟，App 重啟或重新部署後會消失"
+                   "（觀察清單、持股、模擬交易、到價通知、大戶籌碼累積都會受影響）。設定方式：在 App 的 Secrets 填入 GITHUB_DATA_TOKEN 與 GITHUB_DATA_REPO。")
+        return
+    if not PERSIST.pulled:
+        st.error(f"☁️ 雲端資料同步失敗：{PERSIST.last_error or '尚未完成'}。在恢復之前，系統不會上傳任何資料，以免覆蓋雲端的舊資料。")
+        if st.button("🔄 重新同步", key="persist_retry"):
+            PERSIST.boot_pull()
+            st.rerun()
+        return
+    c = PERSIST.counts
+    msg = f"☁️ 雲端資料同步：已啟用　·　啟動時還原 {c['down']} 個檔案　·　最近一次上傳 {PERSIST.last_push or '尚未'}"
+    if PERSIST.last_error:
+        st.warning(msg + f"　·　⚠️ {PERSIST.last_error}")
+    else:
+        st.caption(msg)
+    for n in PERSIST.notes:
+        st.caption("⚠️ " + n)
+
 if app_mode == "🏠 戰情室首頁":
     st.title("🏠 戰情室首頁")
+    render_sync_status()
     st.caption("一進來就看重點，不用每頁點過去——下面任何一塊都可以點按鈕直接跳到完整頁面。")
 
     # ---- 每日早報：把總經數字濃縮成一句話 ----
